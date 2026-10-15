@@ -2,7 +2,8 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="theme-color" content="#008751">
   <title>Naijacraft - Build your own Lagos</title>
   <meta name="description" content="Naijacraft is a free, in-browser block-building game. Get your own plot in a virtual Lagos and build.">
   <link rel="stylesheet" href="css/style.css">
@@ -18,54 +19,139 @@
   </div>
 
   <div id="menu" class="screen hidden">
-    <div class="panel">
+    <div class="panel wide menu-panel">
       <div class="logo">NAIJACRAFT</div>
       <div class="flagbar"><i></i><i></i><i></i></div>
       <p class="tagline">Your city. Your land. Build your own Lagos.</p>
-      <label for="username">Choose your username</label>
-      <input id="username" maxlength="16" autocomplete="off" spellcheck="false" placeholder="e.g. PeaceableBuilds">
-      <p id="name-error" class="error"></p>
-      <p id="touch-note" class="error hidden">Touch controls are not ready yet. Please use a computer with a mouse and keyboard for now.</p>
-      <button id="play" class="primary">Enter Lagos</button>
-      <div class="how">
-        <b>Controls</b>
-        <span><kbd>W A S D</kbd> move</span><span><kbd>Mouse</kbd> look</span>
-        <span><kbd>Space</kbd> jump</span><span><kbd>Shift</kbd> sprint</span>
-        <span><kbd>Space</kbd>x2 fly</span><span><kbd>Left click</kbd> break</span>
-        <span><kbd>Right click</kbd> place</span><span><kbd>1-9</kbd> / wheel hotbar</span>
-        <span><kbd>E</kbd> all blocks</span><span><kbd>Esc</kbd> menu</span>
+      <div class="menu-grid">
+        <div class="menu-col">
+          <label for="username">Choose your username</label>
+          <input id="username" maxlength="16" autocomplete="off" spellcheck="false" placeholder="e.g. PeaceableBuilds">
+          <p id="name-error" class="error"></p>
+          <div class="challenge"><b>This week's challenge</b><span id="menu-challenge"></span></div>
+          <p class="note">You own <b>Plot 06</b> (yellow border) in Ikeja. Build anything, meet the neighbours, ride the vibe from the market to Bar Beach. Press <kbd>H</kbd> in game for all controls.</p>
+        </div>
+        <div class="menu-col">
+          <label>Your character</label>
+          <div id="menu-look" class="look-picker"></div>
+        </div>
       </div>
-      <p class="note">Prototype: you own <b>Plot 06</b> (yellow border). Your builds save in this browser only. Online accounts and a shared city come next.</p>
+      <p id="touch-note" class="note hidden">On a phone? Use the on-screen stick to move, drag on the right to look, and the buttons to build.</p>
+      <button id="play" class="primary">Enter Lagos</button>
+      <p class="note small">Prototype: your builds save in this browser. Online accounts and a shared city come next.</p>
     </div>
   </div>
 
   <div id="hud" class="hidden">
     <div id="crosshair"></div>
-    <div id="info"><div id="info-plot"></div><div id="info-sub"></div><div id="info-pos"></div></div>
+    <div id="info"><div id="info-plot"></div><div id="info-sub"></div><div id="info-clock"></div><div id="info-pos"></div></div>
+    <canvas id="minimap" width="150" height="171"></canvas>
     <div id="toast"></div>
+    <div id="achv"></div>
+    <div id="mode-bar" class="hidden"></div>
+    <div id="bubbles"></div>
     <div id="hotbar-wrap"><div id="block-name"></div><div id="hotbar"></div></div>
   </div>
+  <div id="water-tint" class="hidden"></div>
+  <div id="flash"></div>
+  <div id="touch" class="hidden"></div>
 
   <div id="inventory" class="screen hidden">
     <div class="panel wide">
-      <h2>Blocks</h2>
-      <p class="note">Click a block to put it in the selected hotbar slot. Press <kbd>E</kbd> to close.</p>
+      <h2>Blocks &amp; Blueprints</h2>
+      <div id="inv-tabs" class="tabs"></div>
+      <p id="inv-note" class="note"></p>
       <div id="inventory-grid"></div>
+      <button class="close-btn" data-close="inventory">Close (E)</button>
     </div>
   </div>
 
   <div id="pause" class="screen hidden">
-    <div class="panel">
+    <div class="panel wide">
       <h2>Paused</h2>
-      <button id="resume" class="primary">Resume</button>
-      <label for="set-view">View distance: <b id="set-view-val"></b></label>
-      <input id="set-view" type="range" min="3" max="12" step="1">
-      <label for="set-res">Graphics resolution</label>
-      <select id="set-res"><option value="1">High (sharpest)</option><option value="1.5">Medium</option><option value="2">Low (fastest)</option></select>
-      <label for="set-sens">Mouse sensitivity</label>
-      <input id="set-sens" type="range" min="0.3" max="2.5" step="0.1">
-      <button id="reset-plot">Clear my plot</button>
-      <p class="note">Tip: lower view distance and resolution if the game runs slowly.</p>
+      <div class="tabs" id="pause-tabs">
+        <button data-tab="p-game" class="active">Game</button>
+        <button data-tab="p-plot">My plot</button>
+        <button data-tab="p-look">Character</button>
+        <button data-tab="p-achv">Achievements <span id="achv-count"></span></button>
+        <button data-tab="p-settings">Settings</button>
+      </div>
+      <section id="p-game" class="ptab">
+        <button id="resume" class="primary">Resume</button>
+        <div class="challenge"><b>This week's challenge</b><span id="pause-challenge"></span></div>
+        <div class="btn-row">
+          <button id="open-map">Map &amp; teleport (M)</button>
+          <button id="open-help">Controls (H)</button>
+          <button id="take-photo">Take photo (P)</button>
+        </div>
+      </section>
+      <section id="p-plot" class="ptab hidden">
+        <label for="plot-name">Plot name (shown on your sign)</label>
+        <div class="btn-row"><input id="plot-name" maxlength="24" placeholder="e.g. Peaceable Palace"><button id="save-plot-name">Save</button></div>
+        <label>Share your build</label>
+        <p class="note">Copy your build code and send it to a friend on WhatsApp. They can load it on their own plot.</p>
+        <div class="btn-row"><button id="copy-code">Copy build code</button></div>
+        <textarea id="code-box" rows="3" placeholder="Paste a build code here to load it onto your plot"></textarea>
+        <div class="btn-row"><button id="load-code">Load build code</button><button id="reset-plot" class="danger">Clear my plot</button></div>
+      </section>
+      <section id="p-look" class="ptab hidden">
+        <div id="pause-look" class="look-picker"></div>
+      </section>
+      <section id="p-achv" class="ptab hidden"><div id="achv-list"></div></section>
+      <section id="p-settings" class="ptab hidden">
+        <label for="set-view">View distance: <b id="set-view-val"></b></label>
+        <input id="set-view" type="range" min="3" max="12" step="1">
+        <label for="set-res">Graphics resolution</label>
+        <select id="set-res"><option value="1">High (sharpest)</option><option value="1.5">Medium</option><option value="2">Low (fastest)</option></select>
+        <label for="set-sens">Mouse / touch sensitivity</label>
+        <input id="set-sens" type="range" min="0.3" max="2.5" step="0.1">
+        <label for="set-vol">Sound volume</label>
+        <input id="set-vol" type="range" min="0" max="1" step="0.05">
+        <label for="set-time">Time of day: <b id="set-time-val"></b></label>
+        <input id="set-time" type="range" min="0" max="1" step="0.005">
+        <label class="check"><input id="set-freeze" type="checkbox"> Freeze time</label>
+        <label for="set-weather">Weather</label>
+        <select id="set-weather"><option value="auto">Lagos (sun with the odd shower)</option><option value="clear">Always sunny</option><option value="rain">Rainy season</option></select>
+        <p class="note">Tip: lower view distance and resolution if the game runs slowly.</p>
+      </section>
+    </div>
+  </div>
+
+  <div id="map" class="screen hidden">
+    <div class="panel wide">
+      <h2>Map of Lagos</h2>
+      <p class="note">Click anywhere on the map to teleport there.</p>
+      <canvas id="bigmap" width="420" height="510"></canvas>
+      <div class="btn-row" id="warp-buttons"></div>
+      <button class="close-btn" data-close="map">Close (M)</button>
+    </div>
+  </div>
+
+  <div id="help" class="screen hidden">
+    <div class="panel wide">
+      <h2>Controls</h2>
+      <div class="help-grid">
+        <span><kbd>W A S D</kbd></span><span>Move (arrows work too)</span>
+        <span><kbd>Mouse</kbd></span><span>Look around</span>
+        <span><kbd>Space</kbd></span><span>Jump / swim up</span>
+        <span><kbd>Space</kbd> twice</span><span>Fly (Space up, Shift down)</span>
+        <span><kbd>Shift</kbd></span><span>Sprint</span>
+        <span><kbd>Left click</kbd></span><span>Break block (hold to repeat)</span>
+        <span><kbd>Right click</kbd></span><span>Place block, open doors, start generators</span>
+        <span><kbd>Middle click</kbd></span><span>Pick the block you are looking at</span>
+        <span><kbd>1-9</kbd> / wheel</span><span>Choose hotbar slot</span>
+        <span><kbd>E</kbd></span><span>All blocks and blueprints</span>
+        <span><kbd>Ctrl Z</kbd> / <kbd>Ctrl Y</kbd></span><span>Undo / redo</span>
+        <span><kbd>F</kbd> then <kbd>F</kbd></span><span>Select an area (two corners)</span>
+        <span><kbd>G</kbd> / <kbd>X</kbd></span><span>Fill area with block / clear area</span>
+        <span><kbd>C</kbd> / <kbd>V</kbd></span><span>Copy area / paste it</span>
+        <span><kbd>R</kbd></span><span>Rotate a paste or blueprint</span>
+        <span><kbd>T</kbd></span><span>Switch camera (first / third person)</span>
+        <span><kbd>M</kbd></span><span>Map and teleport</span>
+        <span><kbd>P</kbd></span><span>Take a photo</span>
+        <span><kbd>Esc</kbd></span><span>Pause, settings, character, share</span>
+      </div>
+      <button class="close-btn" data-close="help">Close (H)</button>
     </div>
   </div>
 
