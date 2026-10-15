@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Naijacraft - Build your own Lagos</title>
+  <meta name="description" content="Naijacraft is a free, in-browser block-building game. Get your own plot in a virtual Lagos and build.">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <canvas id="game" tabindex="0"></canvas>
+
+  <div id="loading" class="screen">
+    <div class="logo">NAIJACRAFT</div>
+    <div class="flagbar"><i></i><i></i><i></i></div>
+    <p id="loading-text">Loading Lagos...</p>
+    <div class="bar"><div id="loading-fill"></div></div>
+  </div>
+
+  <div id="menu" class="screen hidden">
+    <div class="panel">
+      <div class="logo">NAIJACRAFT</div>
+      <div class="flagbar"><i></i><i></i><i></i></div>
+      <p class="tagline">Your city. Your land. Build your own Lagos.</p>
+      <label for="username">Choose your username</label>
+      <input id="username" maxlength="16" autocomplete="off" spellcheck="false" placeholder="e.g. PeaceableBuilds">
+      <p id="name-error" class="error"></p>
+      <p id="touch-note" class="error hidden">Touch controls are not ready yet. Please use a computer with a mouse and keyboard for now.</p>
+      <button id="play" class="primary">Enter Lagos</button>
+      <div class="how">
+        <b>Controls</b>
+        <span><kbd>W A S D</kbd> move</span><span><kbd>Mouse</kbd> look</span>
+        <span><kbd>Space</kbd> jump</span><span><kbd>Shift</kbd> sprint</span>
+        <span><kbd>Space</kbd>x2 fly</span><span><kbd>Left click</kbd> break</span>
+        <span><kbd>Right click</kbd> place</span><span><kbd>1-9</kbd> / wheel hotbar</span>
+        <span><kbd>E</kbd> all blocks</span><span><kbd>Esc</kbd> menu</span>
+      </div>
+      <p class="note">Prototype: you own <b>Plot 06</b> (yellow border). Your builds save in this browser only. Online accounts and a shared city come next.</p>
+    </div>
+  </div>
+
+  <div id="hud" class="hidden">
+    <div id="crosshair"></div>
+    <div id="info"><div id="info-plot"></div><div id="info-sub"></div><div id="info-pos"></div></div>
+    <div id="toast"></div>
+    <div id="hotbar-wrap"><div id="block-name"></div><div id="hotbar"></div></div>
+  </div>
+
+  <div id="inventory" class="screen hidden">
+    <div class="panel wide">
+      <h2>Blocks</h2>
+      <p class="note">Click a block to put it in the selected hotbar slot. Press <kbd>E</kbd> to close.</p>
+      <div id="inventory-grid"></div>
+    </div>
+  </div>
+
+  <div id="pause" class="screen hidden">
+    <div class="panel">
+      <h2>Paused</h2>
+      <button id="resume" class="primary">Resume</button>
+      <label for="set-view">View distance: <b id="set-view-val"></b></label>
+      <input id="set-view" type="range" min="3" max="12" step="1">
+      <label for="set-res">Graphics resolution</label>
+      <select id="set-res"><option value="1">High (sharpest)</option><option value="1.5">Medium</option><option value="2">Low (fastest)</option></select>
+      <label for="set-sens">Mouse sensitivity</label>
+      <input id="set-sens" type="range" min="0.3" max="2.5" step="0.1">
+      <button id="reset-plot">Clear my plot</button>
+      <p class="note">Tip: lower view distance and resolution if the game runs slowly.</p>
+    </div>
+  </div>
+
+  <div id="fatal" class="screen hidden"><div class="panel"><h2>Naijacraft can't start</h2><p id="fatal-text"></p></div></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/babylonjs@7.31.0/babylon.js"></script>
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>
