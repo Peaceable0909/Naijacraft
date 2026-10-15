@@ -1,5 +1,6 @@
 // Naijacraft backend entry point: a thin router in front of two Durable Objects.
 //   GET  /health            public status and which sign-in methods are available
+//   GET  /stats             how many players are online and how many plots are free
 //   GET  /ws                WebSocket into the world
 //   *    /auth/*            accounts (guest, password, Google)
 //   *    /admin/*           moderation tools, protected by the ADMIN_TOKEN secret
@@ -16,6 +17,9 @@ const AUTH_POST = {
   refresh: 'refresh', upgrade: 'upgrade', 'link-google': 'linkGoogle', rename: 'rename', password: 'changePassword', logout: 'logoutAll',
 };
 const NEEDS_TOKEN = new Set(['refresh', 'upgrade', 'link-google', 'rename', 'password', 'logout']);
+
+// The start screen shows how busy Lagos is. Cached for a few seconds so it can't be used to keep the world awake.
+let statsCache = { at: 0, body: null };
 
 const accounts = (env) => env.ACCOUNTS.get(env.ACCOUNTS.idFromName('main'));
 const world = (env) => {
@@ -99,6 +103,12 @@ export default {
           google: !!env.GOOGLE_CLIENT_ID, googleClientId: env.GOOGLE_CLIENT_ID || null,
           captcha: !!env.TURNSTILE_SECRET, turnstileSiteKey: env.TURNSTILE_SECRET ? env.TURNSTILE_SITE_KEY || null : null,
         });
+      } else if (url.pathname === '/stats') {
+        if (!statsCache.body || Date.now() - statsCache.at > 10_000) {
+          const s = await world(env).stats();
+          statsCache = { at: Date.now(), body: { players: s.players, claimedPlots: s.claimedPlots, freePlots: s.freePlots } };
+        }
+        response = json(statsCache.body, 200, { 'cache-control': 'public, max-age=10' });
       } else if (url.pathname.startsWith('/auth/')) {
         if (!allowedOrigin(request, env).ok) response = json({ error: 'origin_not_allowed' }, 403);
         else response = await handleAuth(request, env, url);

@@ -1,4 +1,5 @@
-// Moving traffic: yellow danfo buses and a keke napep driving loops around the city (right-hand traffic).
+// Moving traffic: yellow danfo buses and keke napeps driving loops round the city (right-hand traffic).
+// Positions are a pure function of the shared clock, so every player sees the same vehicles in the same places.
 import { createCharMaterial } from './render.js';
 import { SX, CITY, PITCH } from './world.js';
 
@@ -64,9 +65,10 @@ function buildKeke(scene, name, mats) {
   return { root, length: 2.6, width: 1.3, lights };
 }
 
-const CALLS = ['Oshodi! Oshodi!', 'Obalende! Enter with your change o!', 'Ojuelegba! Straight!', 'CMS! CMS! Oya enter!', 'Yaba! Yaba! Straight!', 'Lekki! Ajah! Move body!'];
+const CALLS = ['Oshodi! Oshodi!', 'Obalende! Enter with your change o!', 'Ojuelegba! Straight!', 'CMS! CMS! Oya enter!', 'Yaba! Yaba! Straight!', 'Lekki! Ajah! Move body!', 'Ikorodu! Ikorodu!', 'Mile 12! Mile 12!'];
 
-// Rectangular loops; corners listed in driving order (clockwise from above, right-hand traffic).
+// Rectangular loops along the roads at grid lines i0 and i1; corners are listed in driving order
+// (clockwise seen from above, right-hand traffic).
 function ringRoute(i0, i1) {
   const a = i0 * PITCH, b = i1 * PITCH;
   return [[a + 5.5, a + 5.5], [b + 2.5, a + 5.5], [b + 2.5, b + 2.5], [a + 5.5, b + 2.5]];
@@ -81,31 +83,41 @@ export function createTraffic(scene) {
     tyre: createCharMaterial(scene, '#141416'),
     headlight: createCharMaterial(scene, '#fff3c4', null, true),
   };
-  const outer = ringRoute(0, 4), inner = ringRoute(1, 3);
+  const outer = ringRoute(0, 8), ring1 = ringRoute(1, 7), ring2 = ringRoute(2, 6), inner = ringRoute(3, 5);
   const defs = [
-    { kind: 'danfo', route: outer, speed: 7.5, offset: 0.1 },
-    { kind: 'danfo', route: outer, speed: 7.5, offset: 0.6 },
-    { kind: 'danfo', route: inner, speed: 6.5, offset: 0.3 },
-    { kind: 'keke', route: inner, speed: 5, offset: 0.8 },
+    { kind: 'danfo', route: outer, speed: 8.5, offset: 0.05 },
+    { kind: 'danfo', route: outer, speed: 8.5, offset: 0.38 },
+    { kind: 'danfo', route: outer, speed: 8.5, offset: 0.71 },
+    { kind: 'danfo', route: ring1, speed: 7.5, offset: 0.2 },
+    { kind: 'danfo', route: ring1, speed: 7.5, offset: 0.7 },
+    { kind: 'danfo', route: ring2, speed: 7, offset: 0.45 },
+    { kind: 'keke', route: ring2, speed: 7, offset: 0.95 },
+    { kind: 'keke', route: inner, speed: 5, offset: 0.15 },
+    { kind: 'keke', route: inner, speed: 5, offset: 0.6 },
   ];
   const vehicles = defs.map((d, n) => {
     const model = d.kind === 'danfo' ? buildDanfo(scene, 'danfo' + n, mats) : buildKeke(scene, 'keke' + n, mats);
-    const segs = d.route.map((p, i) => { const q = d.route[(i + 1) % d.route.length]; return { p, q, len: Math.hypot(q[0] - p[0], q[1] - p[1]) }; });
+    const segs = d.route.map((p, i) => { const q = d.route[(i + 1) % d.route.length]; return { p, q, len: Math.hypot(q[0] - p[0], q[1] - p[1]), heading: Math.atan2(q[0] - p[0], q[1] - p[1]) }; });
     const total = segs.reduce((s, g) => s + g.len, 0);
-    return { ...d, ...model, segs, total, dist: d.offset * total, heading: 0, stopped: 0, honked: 0, call: CALLS[n % CALLS.length], x: 0, z: 0 };
+    return { ...d, ...model, segs, total, heading: 0, honked: 0, call: CALLS[n % CALLS.length], x: 0, z: 0, corner: 0 };
   });
 
-  function place(v) {
-    let d = ((v.dist % v.total) + v.total) % v.total;
-    for (const g of v.segs) {
+  // Straight along each side, with the turn at a corner blended over a few blocks so buses swing round instead of snapping.
+  const TURN = 6;
+  function place(v, clock) {
+    const dist = ((v.offset * v.total + v.speed * clock) % v.total + v.total) % v.total;
+    let d = dist;
+    for (let i = 0; i < v.segs.length; i++) {
+      const g = v.segs[i];
       if (d <= g.len) {
         const t = d / g.len;
         v.x = g.p[0] + (g.q[0] - g.p[0]) * t; v.z = g.p[1] + (g.q[1] - g.p[1]) * t;
-        const target = Math.atan2(g.q[0] - g.p[0], g.q[1] - g.p[1]);
-        let diff = target - v.heading;
-        while (diff > Math.PI) diff -= Math.PI * 2;
-        while (diff < -Math.PI) diff += Math.PI * 2;
-        v.heading += diff * Math.min(1, 0.25);
+        let h = g.heading;
+        const next = v.segs[(i + 1) % v.segs.length], prev = v.segs[(i + v.segs.length - 1) % v.segs.length];
+        const toEnd = g.len - d;
+        if (toEnd < TURN) h = lerpAngle(g.heading, next.heading, 0.5 * (1 - toEnd / TURN));
+        else if (d < TURN) h = lerpAngle(prev.heading, g.heading, 0.5 + 0.5 * (d / TURN));
+        v.heading = h;
         break;
       }
       d -= g.len;
@@ -113,32 +125,35 @@ export function createTraffic(scene) {
     v.root.position.set(v.x, 1, v.z);
     v.root.rotation.y = v.heading;
   }
-  vehicles.forEach((v) => { for (let k = 0; k < 20; k++) place(v); });
 
   return {
     vehicles,
-    // Returns events: { honk: vehicle } when a bus brakes for the player.
-    update(dt, player, light, isNight) {
+    // clock: shared time in seconds. Returns { honk: vehicle } events when a bus honks at the player.
+    update(clock, dt, player, light, isNight) {
       const events = [];
       for (const v of vehicles) {
-        // brake if the player is in the lane just ahead
+        place(v, clock);
         const fx = Math.sin(v.heading), fz = Math.cos(v.heading);
         const dx = player.x - v.x, dz = player.z - v.z;
         const ahead = dx * fx + dz * fz, side = Math.abs(dx * fz - dz * fx);
-        const blocked = player.y < 4 && ahead > 0 && ahead < v.length / 2 + 3 && side < v.width / 2 + 0.6;
-        if (blocked) {
-          if (v.honked <= 0) { events.push({ honk: v }); v.honked = 4; }
-        } else {
-          v.dist += v.speed * dt;
-        }
         v.honked -= dt;
-        place(v);
+        if (player.y < 4 && ahead > 0 && ahead < v.length / 2 + 6 && side < v.width / 2 + 1.2 && v.honked <= 0) {
+          events.push({ honk: v });
+          v.honked = 6;
+        }
         for (const l of v.lights) l.scaling.setAll(isNight ? 1.25 : 1);
       }
       for (const m of [mats.yellow, mats.green, mats.black, mats.glass, mats.tyre]) m.setColor3('light', light);
       return events;
     },
   };
+}
+
+function lerpAngle(a, b, t) {
+  let d = b - a;
+  while (d > Math.PI) d -= Math.PI * 2;
+  while (d < -Math.PI) d += Math.PI * 2;
+  return a + d * t;
 }
 
 export { CALLS };

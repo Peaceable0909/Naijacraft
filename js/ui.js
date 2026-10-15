@@ -161,9 +161,10 @@ export function renderAchievements(container, got) {
 export function createBubbles(root) {
   const pool = [];
   return {
-    show(key, text, until) {
+    show(key, text, until, cls = '') {
       let b = pool.find((p) => p.key === key);
-      if (!b) { b = { key, el: document.createElement('div') }; b.el.className = 'bubble'; root.appendChild(b.el); pool.push(b); }
+      if (!b) { b = { key, el: document.createElement('div') }; root.appendChild(b.el); pool.push(b); }
+      b.el.className = 'bubble' + (cls ? ' ' + cls : '');
       b.el.textContent = text; b.until = until;
       return b;
     },

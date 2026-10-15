@@ -3,12 +3,12 @@
 import { B, BLOCKS, OPAQUE, SOLID, EMIT, CONNECTING, shapeBoxes, connects } from './blocks.js';
 import {
   PLOT, ROAD, GRID, PITCH, CITY, BEACH, SX, SZ, HEIGHT, PLOT_ROWS, PLOT_CELLS, PLOTS, OFFLINE_PLOT, SPAWN,
-  plotAt, plotOrigin, plotByNumber, districtAt, DISTRICT_NAMES, cellIndex, claimOrder, plotFront,
+  plotAt, plotOrigin, plotByNumber, districtAt, DISTRICT_NAMES, cellIndex, claimOrder, plotFront, mapX,
 } from '../shared/layout.js';
 
 export {
   PLOT, ROAD, GRID, PITCH, CITY, BEACH, SX, SZ, HEIGHT, PLOT_ROWS, PLOT_CELLS, PLOTS, OFFLINE_PLOT, SPAWN,
-  plotAt, plotOrigin, plotByNumber, districtAt, DISTRICT_NAMES, cellIndex, claimOrder, plotFront,
+  plotAt, plotOrigin, plotByNumber, districtAt, DISTRICT_NAMES, cellIndex, claimOrder, plotFront, mapX,
 };
 export const CHUNK = 16;
 export const NCX = Math.ceil(SX / CHUNK);

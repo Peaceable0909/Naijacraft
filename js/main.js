@@ -1,25 +1,36 @@
-import { B, BLOCKS, FABRICS, DEFAULT_HOTBAR, createAtlasCanvas, shapeBoxes } from './blocks.js';
-import { World, PLOTS, PLAYER_PLOT, PLOT, SX, SZ, CITY, HEIGHT, NCX, NCZ, CHUNK, SPAWN, plotAt, districtAt } from './world.js';
+import { B, BLOCKS, DEFAULT_HOTBAR, createAtlasCanvas, shapeBoxes } from './blocks.js';
+import { World, PLOTS, PLOT, SX, SZ, CITY, HEIGHT, NCX, NCZ, CHUNK, SPAWN, OFFLINE_PLOT, plotAt, districtAt, plotFront, plotByNumber, mapX } from './world.js';
 import { generateCity, PLAZA } from './city.js';
 import { buildChunk } from './mesher.js';
-import { Player, EYE } from './player.js';
+import { Player } from './player.js';
 import { storage } from './storage.js';
 import { registerShaders, createVoxelMaterials, createSky, createGroundPlanes, computeEnv, applyEnv, clockString, lightColor } from './render.js';
-import { createCharacter, setCharacterAtlas, DEFAULT_LOOK } from './characters.js';
+import { createCharacter, setCharacterAtlas, DEFAULT_LOOK, EMOTES, EMOTE_SECONDS } from './characters.js';
 import { createResidents } from './npcs.js';
 import { createTraffic } from './vehicles.js';
 import { createMinimap } from './minimap.js';
 import { createAchievements, weeklyChallenge } from './achievements.js';
-import { rotateStruct } from './prefabs.js';
 import { createTouchControls } from './touch.js';
 import { sfx } from './audio.js';
 import { createHud, mountLookPicker, toast, showAchievement, renderAchievements, createBubbles } from './ui.js';
+import { G, $ } from './game.js';
+import * as build from './building.js';
+import { getServerUrl } from './config.js';
+import { Auth } from './auth.js';
+import { createOnline } from './online.js';
+import { createRemotePlayers } from './remote.js';
+import { createChat, nameColor } from './chat.js';
+import { createMenu, TIPS } from './menu.js';
+import { createClaimScreen } from './claim.js';
+import { createAccountPanel } from './account.js';
+import { showDialog, confirmDialog, dialogOpen } from './dialog.js';
+import { FLAG } from '../shared/protocol.js';
+import { MAX_BLOCK_ID } from '../shared/layout.js';
 
-const $ = (id) => document.getElementById(id);
 const BABYLON = window.BABYLON;
-const REACH = 7;
-const DAY_LENGTH = 20 * 60;     // real seconds per Lagos day
-const isTouch = window.matchMedia('(pointer: coarse)').matches;
+const DAY_LENGTH = 20 * 60;     // real seconds per Lagos day when playing offline
+const isTouch = G.isTouch;
+const IDLE_INPUT = { f: 0, s: 0, jump: false, down: false, sprint: false };
 
 function fatal(msg) {
   $('loading').classList.add('hidden');
@@ -29,11 +40,10 @@ function fatal(msg) {
 
 const settings = storage.loadSettings();
 const profile = storage.loadProfile() || {};
-const myPlot = PLOTS[PLAYER_PLOT - 1];
 const validLook = (l) => l && Number.isInteger(l.skin) && Number.isInteger(l.outfit) && Number.isInteger(l.hat);
 
 const state = {
-  mode: 'loading',      // loading | menu | playing | paused | inventory | map | help
+  mode: 'loading',      // loading | menu | claim | playing | chat | paused | inventory | map | help | players | emote
   started: false,
   hotbar: Array.isArray(profile.hotbar) && profile.hotbar.length === 9 && profile.hotbar.every((i) => BLOCKS[i] && BLOCKS[i].placeable) ? profile.hotbar : DEFAULT_HOTBAR.slice(),
   sel: Number.isInteger(profile.sel) ? Math.min(8, Math.max(0, profile.sel)) : 0,
@@ -46,26 +56,44 @@ const state = {
   paste: null,          // { struct, rot, label, blueprint }
   clipboard: null,
   rain: 0, rainTarget: 0, weatherTimer: 90,
+  emote: null,          // { id, kind, start, until } while the local avatar performs an emote
 };
+G.settings = settings; G.profile = profile; G.state = state;
 
-let engine, scene, camera, world, player, hud, sky, minimap, residents, traffic, avatar, achievements, bubbles, touch;
+let engine, scene, camera, world, player, hud, sky, minimap, residents, traffic, avatar, achievements, bubbles, touch, chat, remote, claimScreen, menu, accountPanel;
+let pauseLook = null;
 let materials, env = computeEnv(state.time);
+let auth = null, serverInfo = null, server = '';
 const keys = {};
 const mouse = { left: false, right: false, next: 0 };
-let plotDirtyAt = 0, lastSpaceTap = 0, lastDenied = 0, clockTime = 0;
+let plotDirtyAt = 0, lastSpaceTap = 0, clockTime = 0, nextPosSend = 0, nextProfileSend = 0, lastRainToast = 0;
 let selBox, areaBox, rainPS;
 const chunkMeshes = new Array(NCX * NCZ).fill(null);
 const labels = new Map();
-const undoStack = [], redoStack = [];
+const tagEls = new Map();
+const mutes = new Set(storage.loadMutes());
+let pendingClaim = null;
+
+const frame = () => new Promise((r) => requestAnimationFrame(r));
+function setLoading(text, p) { $('loading-text').textContent = text; $('loading-fill').style.width = Math.round(p * 100) + '%'; }
+
+G.hooks.shiftHeld = () => keys.ShiftLeft || keys.ShiftRight;
+G.hooks.markPlotDirty = () => { if (!G.online && G.myPlot) plotDirtyAt = performance.now() + 1500; };
+G.hooks.savePlotNow = () => savePlotNow();
+G.hooks.closeOverlay = () => { if (state.mode === 'inventory') resumePlay(); };
+
+// ------------------------------------------------------------------ boot
 
 async function boot() {
-  if (!BABYLON) return fatal('The 3D engine (Babylon.js) failed to load. Check your internet connection and refresh the page.');
   const canvas = $('game');
   try {
     engine = new BABYLON.Engine(canvas, false, { stencil: false, powerPreference: 'high-performance', preserveDrawingBuffer: false });
   } catch (e) {
     return fatal('Your browser does not support WebGL, which Naijacraft needs. Try Chrome, Edge, Firefox or Safari.');
   }
+  if (!isTouch) document.documentElement.classList.add('fx-blur');
+  $('loading-tip').textContent = 'Tip: ' + TIPS[Math.floor(Math.random() * TIPS.length)];
+  G.engine = engine;
   applyResolution();
   registerShaders();
 
@@ -73,13 +101,16 @@ async function boot() {
   scene.clearColor = new BABYLON.Color4(0.55, 0.78, 0.95, 1);
   scene.skipPointerMovePicking = true;
   if (BABYLON.ScenePerformancePriority) scene.performancePriority = BABYLON.ScenePerformancePriority.Intermediate;
+  G.scene = scene;
 
-  camera = new BABYLON.FreeCamera('cam', new BABYLON.Vector3(84, 40, 84), scene);
+  camera = new BABYLON.FreeCamera('cam', new BABYLON.Vector3(PLAZA, 40, PLAZA), scene);
   camera.minZ = 0.1; camera.maxZ = 1000; camera.fov = 1.2;
   camera.inputs.clear();
+  G.camera = camera;
 
   setLoading('Painting the textures...', 0.05);
   const atlas = createAtlasCanvas();
+  G.atlas = atlas;
   setCharacterAtlas(atlas);
   materials = createVoxelMaterials(scene, atlas);
   sky = createSky(scene);
@@ -91,52 +122,87 @@ async function boot() {
   setLoading('Laying the roads of Lagos...', 0.1);
   await frame();
   world = new World();
+  G.world = world;
   generateCity(world);
-  loadSavedPlot();
   setLoading('Switching on the street lights...', 0.16);
   await frame();
   world.computeAllLight();
   world.markAllDirty();
 
   player = new Player(world);
-  const p = profile.pos;
-  const start = Array.isArray(p) && p.length === 3 && p.every(Number.isFinite) && !player.collides(p[0], p[1], p[2]);
-  player.pos = start ? { x: p[0], y: p[1], z: p[2] } : { x: SPAWN.x, y: SPAWN.y, z: SPAWN.z };
-  player.yaw = start ? profile.yaw || 0 : SPAWN.yaw;
-  player.pitch = start ? profile.pitch || 0 : SPAWN.pitch;
+  G.player = player;
+  player.pos = { x: SPAWN.x, y: SPAWN.y, z: SPAWN.z };
+  player.yaw = SPAWN.yaw; player.pitch = SPAWN.pitch;
 
   await meshAll();
   setLoading('Waking up the neighbours...', 0.97);
   await frame();
   minimap = createMinimap(world, atlas);
+  G.minimap = minimap;
   residents = createResidents(scene);
   traffic = createTraffic(scene);
+  remote = createRemotePlayers({ scene, lightAt });
   rebuildAvatar();
-  achievements = createAchievements(profile.achievements, (a) => { showAchievement(a); sfx.achievement(); saveProfile(); });
+  achievements = createAchievements(profile.achievements, (a) => { showAchievement(a); sfx.achievement(); saveProfile(); queueProfileSync(); });
+  G.achievements = achievements;
   bubbles = createBubbles($('bubbles'));
   for (const pl of PLOTS) drawPlotLabel(pl);
 
-  hud = createHud(atlas, state, { onSelect: selectSlot, onBlueprint: startBlueprint });
+  hud = createHud(atlas, state, { onSelect: selectSlot, onBlueprint: build.startBlueprint });
+  G.hud = hud;
   hud.renderHotbar();
+  chat = createChat({ onSend: sendChat, onOpenChange: onChatOpenChange });
   bindUI();
   applyViewDistance();
 
   engine.runRenderLoop(tick);
   window.addEventListener('resize', () => engine.resize());
-  // debug / automated-test hook
-  window.__naija = { world, player, scene, state, camera, keys, tryBreak, tryPlace, getTarget, enterGame, canEdit, applyEdits, undo, redo, achievements, residents, traffic, setTime: (t) => { state.time = t; }, startBlueprint, placePaste, toggleDoor, exportCode, importCode, settings, showMode };
+  window.__naija = {
+    G, world, player, scene, state, camera, keys, settings, residents, traffic, remote, achievements,
+    tryBreak: build.tryBreak, tryPlace: build.tryPlace, getTarget: build.getTarget, canEdit: build.canEdit, applyEdits: build.applyEdits,
+    undo: build.undo, redo: build.redo, startBlueprint: build.startBlueprint, placePaste: build.placePaste, toggleDoor: build.toggleDoor,
+    exportCode: build.exportCode, importCode: build.importCode, enterOffline, showMode, teleport, setTime: (t) => { state.time = t; },
+    get online() { return G.online; }, get menu() { return menu; }, get claimScreen() { return claimScreen; }, get chat() { return chat; },
+    enterGame: () => enterOffline(state.name || 'Builder'),
+  };
 
-  $('username').value = state.name;
-  $('menu-challenge').textContent = weeklyChallenge();
+  // The start screen's pickers share the saved look; a server (if any) is checked while the player reads it.
+  server = await findServer();
+  auth = server ? new Auth(server) : null;
+  serverInfo = auth ? await auth.info() : null;
+  accountPanel = auth ? createAccountPanel({ auth, getInfo: () => serverInfo }) : null;
+  claimScreen = createClaimScreen({ minimap, getOwners: () => G.owners, onClaim: claimPlot });
+  menu = createMenu({
+    server, auth, look: state.look,
+    hooks: { enterOnline, enterOffline },
+  });
+  menu.setOfflineName(state.name);
+  pauseLook = mountLookPicker($('pause-look'), state.look, () => { rebuildAvatar(); saveProfile(); queueProfileSync(); });
   $('pause-challenge').textContent = weeklyChallenge();
-  mountLookPicker($('menu-look'), state.look, () => rebuildAvatar());
-  if (isTouch) $('touch-note').classList.remove('hidden');
   $('loading').classList.add('hidden');
-  showMode('menu');
+  openMenu();
 }
 
-const frame = () => new Promise((r) => requestAnimationFrame(r));
-function setLoading(text, p) { $('loading-text').textContent = text; $('loading-fill').style.width = Math.round(p * 100) + '%'; }
+// The server is either named by ?server=, built into config.js, or is whatever served this very page.
+async function findServer() {
+  const configured = getServerUrl();
+  if (configured) return configured;
+  if (!/^https?:$/.test(location.protocol)) return '';
+  try {
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), 2500);
+    const r = await fetch('/health', { signal: ctl.signal });
+    clearTimeout(timer);
+    if (r.ok && (await r.json()).name === 'naijacraft-world') return location.origin;
+  } catch { /* a plain static host: offline mode */ }
+  return '';
+}
+
+function openMenu() {
+  state.started = false;
+  showMode('menu');
+  menu.open(serverInfo);
+}
 
 // ------------------------------------------------------------------ rendering setup
 
@@ -243,6 +309,20 @@ function applyResolution() {
   engine.resize();
 }
 
+// ------------------------------------------------------------------ plots: borders, signs, ownership
+
+function ringIdFor(p) {
+  if (!p.claimable) return null;
+  if (G.myPlot && G.myPlot.number === p.number) return B.YELLOW;
+  return G.owners.has(p.number) ? B.CONCRETE : B.WHITE;
+}
+
+function refreshPlotVisual(p) {
+  const id = ringIdFor(p);
+  if (id != null) world.setRing(p, id);
+  drawPlotLabel(p);
+}
+
 function drawPlotLabel(p) {
   let entry = labels.get(p.number);
   if (!entry) {
@@ -253,26 +333,43 @@ function drawPlotLabel(p) {
     const plane = BABYLON.MeshBuilder.CreatePlane('label' + p.number, { width: 8, height: 2.5 }, scene);
     plane.material = mat;
     plane.billboardMode = BABYLON.Mesh.BILLBOARDMODE_Y;
-    plane.position.set(p.x + PLOT / 2, 8, p.z + PLOT + 3.5);
+    plane.position.set(p.x + PLOT / 2, 8.5, p.z + PLOT + 3.5);
     plane.isPickable = false;
     plane.renderingGroupId = 1;
     entry = { tex, plane };
     labels.set(p.number, entry);
   }
+  const mine = !!(G.myPlot && p.number === G.myPlot.number);
+  const o = G.owners.get(p.number);
+  let color, title, sub;
+  if (mine) { color = '#c99a0a'; title = state.plotName || 'Your plot'; sub = `${state.name || 'You'}  -  PLOT ${p.number}`; }
+  else if (o) { color = '#44505a'; title = o.name || `${o.owner}'s plot`; sub = `${o.owner}  -  PLOT ${p.number}`; }
+  else if (p.claimable) { color = '#2a6fb0'; title = 'FREE LAND'; sub = `PLOT ${p.number}  -  ${p.district}`; }
+  else { color = '#1d7a4a'; title = p.name || `${p.owner}'s home`; sub = p.name ? p.district : `SHOW HOME  -  ${p.district}`; }
   const g = entry.tex.getContext();
-  const mine = p.number === PLAYER_PLOT;
-  g.fillStyle = mine ? '#c99a0a' : p.owner ? '#44505a' : p.kind === 'free' ? '#2a6fb0' : '#1d7a4a';
+  g.fillStyle = color;
   g.fillRect(0, 0, 512, 160);
   g.fillStyle = 'rgba(255,255,255,.9)'; g.fillRect(0, 0, 512, 8);
   g.fillStyle = '#fff'; g.textAlign = 'center';
-  const title = mine && state.plotName ? state.plotName : p.name || ('PLOT ' + String(p.number).padStart(2, '0'));
-  g.font = `bold ${title.length > 14 ? 46 : 62}px system-ui, sans-serif`;
-  g.fillText(title, 256, 78);
-  g.font = '34px system-ui, sans-serif';
-  const sub = mine ? `${state.name || 'YOUR'} PLOT ${String(p.number).padStart(2, '0')}` : p.owner ? p.owner + "'s home" : p.kind === 'free' ? 'AVAILABLE' : 'PUBLIC SPACE';
-  g.fillText(sub + '  -  ' + p.district, 256, 130);
+  g.font = `bold ${title.length > 14 ? 44 : 60}px system-ui, sans-serif`;
+  g.fillText(title.length > 22 ? title.slice(0, 21) + '...' : title, 256, 78, 480);
+  g.font = '32px system-ui, sans-serif';
+  g.fillText(sub, 256, 130, 480);
   entry.tex.update(true);
 }
+
+// Makes `plot` the player's own: clears the show-grass, paints the yellow border and updates the sign.
+function claimLocally(plot) {
+  const prev = G.myPlot;
+  G.myPlot = plot;
+  if (prev && prev.number !== plot.number) refreshPlotVisual(prev);
+  build.clearPlotContents(plot);
+  refreshPlotVisual(plot);
+  build.resetHistory();
+  updateOnlineUI();
+}
+
+// ------------------------------------------------------------------ avatar
 
 function rebuildAvatar() {
   if (!scene) return;
@@ -283,24 +380,25 @@ function rebuildAvatar() {
 
 // ------------------------------------------------------------------ saving
 
-function loadSavedPlot() {
-  const saved = storage.loadPlot(myPlot.number);
+function loadSavedPlot(plot) {
+  const saved = storage.loadOfflinePlot(plot.number);
   if (!saved) return;
   const decoded = World.decodePlot(saved.data, saved.version);
-  if (decoded) world.applyPlot(myPlot, decoded);
+  if (decoded) build.replacePlotContents(plot, decoded.ids, decoded.metas);
   else console.warn('Saved plot could not be read; starting fresh.');
 }
 
 function savePlotNow() {
   plotDirtyAt = 0;
-  if (!storage.savePlot(myPlot.number, world.exportPlot(myPlot))) toast("Couldn't save - browser storage is full or blocked.", 'bad');
+  if (G.online || !G.myPlot) return;
+  if (!storage.savePlot(G.myPlot.number, world.exportPlot(G.myPlot))) toast("Couldn't save - browser storage is full or blocked.", 'bad');
 }
 
 function saveProfile() {
   if (!player) return;
   storage.saveProfile({
     name: state.name, hotbar: state.hotbar, sel: state.sel, look: state.look, plotName: state.plotName, time: state.time,
-    pos: [player.pos.x, player.pos.y, player.pos.z], yaw: player.yaw, pitch: player.pitch,
+    spawn: G.online ? profile.spawn : { x: player.pos.x, y: player.pos.y, z: player.pos.z, yaw: player.yaw, pitch: player.pitch },
     achievements: achievements ? achievements.toJSON() : profile.achievements,
   });
 }
@@ -310,287 +408,357 @@ function saveAll() {
   if (plotDirtyAt) savePlotNow();
   saveProfile();
 }
-function markPlotDirty() { plotDirtyAt = performance.now() + 1500; }
 
-// ------------------------------------------------------------------ edits, undo, building rules
-
-// Change blocks: edits = [[x, y, z, id, meta]]. Relights, remeshes, updates the map and records undo.
-function applyEdits(edits, { record = true } = {}) {
-  const changes = [];
-  let x0 = Infinity, z0 = Infinity, x1 = -1, z1 = -1;
-  for (const [x, y, z, id, meta = 0] of edits) {
-    const oid = world.get(x, y, z), om = world.getMeta(x, y, z);
-    if (oid === id && om === meta) continue;
-    world.set(x, y, z, id, meta);
-    changes.push([x, y, z, oid, om, id, meta]);
-    if (x < x0) x0 = x; if (x > x1) x1 = x; if (z < z0) z0 = z; if (z > z1) z1 = z;
-  }
-  if (!changes.length) return 0;
-  afterChange(x0, z0, x1, z1);
-  if (record) {
-    undoStack.push(changes);
-    if (undoStack.length > 100) undoStack.shift();
-    redoStack.length = 0;
-  }
-  return changes.length;
+// Looks, plot name and achievements live on the server too (so they follow the player to other devices).
+function queueProfileSync() { nextProfileSend = performance.now() + 1500; }
+function syncProfile() {
+  nextProfileSend = 0;
+  if (!G.online || !G.online.ready) return;
+  G.online.profile({ look: state.look, plotName: state.plotName, achv: achievements.toJSON() });
 }
 
-function afterChange(x0, z0, x1, z1) {
-  const ch = world.relight(x0 - 16, x1 + 16, z0 - 16, z1 + 16);
-  if (ch) world.markBoxDirty(ch[0], ch[1], ch[2], ch[3]);
-  minimap?.update(x0, z0, x1, z1);
-  markPlotDirty();
+// ------------------------------------------------------------------ playing offline
+
+function enterOffline(name) {
+  G.online = null;
+  state.name = name;
+  document.body.classList.remove('online');
+  const plot = plotByNumber(OFFLINE_PLOT);
+  claimLocally(plot);
+  loadSavedPlot(plot);
+  drawPlotLabel(plot);
+  spawnPlayer();
+  startPlaying(`Welcome to Lagos, ${name}! Your plot has the yellow border.`);
 }
 
-function replay(changes, forward) {
-  let x0 = Infinity, z0 = Infinity, x1 = -1, z1 = -1;
-  const list = forward ? changes : changes.slice().reverse();
-  for (const [x, y, z, oid, om, id, meta] of list) {
-    if (forward) world.set(x, y, z, id, meta); else world.set(x, y, z, oid, om);
-    x0 = Math.min(x0, x); x1 = Math.max(x1, x); z0 = Math.min(z0, z); z1 = Math.max(z1, z);
-  }
-  afterChange(x0, z0, x1, z1);
-}
-function undo() {
-  const c = undoStack.pop();
-  if (!c) { toast('Nothing to undo'); return false; }
-  replay(c, false); redoStack.push(c);
-  sfx.undo(); achievements.unlock('undo');
-  toast(`Undone (${c.length} block${c.length > 1 ? 's' : ''})`);
-  return true;
-}
-function redo() {
-  const c = redoStack.pop();
-  if (!c) { toast('Nothing to redo'); return false; }
-  replay(c, true); undoStack.push(c);
-  sfx.undo();
-  toast(`Redone (${c.length} block${c.length > 1 ? 's' : ''})`);
-  return true;
+function spawnPlayer() {
+  let p;
+  const sp = profile.spawn;
+  if (!G.online && sp && [sp.x, sp.y, sp.z].every(Number.isFinite) && !player.collides(sp.x, sp.y, sp.z)) p = sp;
+  else if (G.myPlot) p = plotFront(G.myPlot);
+  else p = SPAWN;
+  player.pos = { x: p.x, y: p.y, z: p.z };
+  player.yaw = p.yaw ?? SPAWN.yaw; player.pitch = p.pitch ?? 0.1;
+  player.vel = { x: 0, y: 0, z: 0 };
+  player.flying = false;
 }
 
-function deny(msg, notify) {
-  if (notify && performance.now() - lastDenied > 700) { lastDenied = performance.now(); toast(msg, 'bad'); }
-  return false;
-}
-function canEdit(x, y, z, notify = false) {
-  if (y < 1) return deny("The ground can't be changed.", notify);
-  if (y >= HEIGHT) return deny('That is as high as the sky limit goes.', notify);
-  const p = plotAt(x, z);
-  if (!p) return deny(z >= CITY ? 'Bar Beach belongs to everyone.' : 'Roads and public spaces belong to the city.', notify);
-  if (p.number !== PLAYER_PLOT) {
-    return deny(p.owner ? `Plot ${p.number} belongs to ${p.owner}. Build on your yellow-bordered plot.` : p.kind === 'free' ? `Plot ${p.number} is unclaimed. Accounts are coming soon!` : 'This is a public space.', notify);
-  }
-  return true;
-}
-
-const eyePos = () => ({ x: player.pos.x, y: player.pos.y + EYE, z: player.pos.z });
-function lookDir() {
-  const cp = Math.cos(player.pitch);
-  return { x: cp * Math.sin(player.yaw), y: -Math.sin(player.pitch), z: cp * Math.cos(player.yaw) };
-}
-function getTarget() {
-  const e = eyePos(), d = lookDir();
-  return world.raycast(e.x, e.y, e.z, d.x, d.y, d.z, REACH);
-}
-function facing() {
-  const fx = Math.sin(player.yaw), fz = Math.cos(player.yaw);
-  return Math.abs(fx) > Math.abs(fz) ? (fx > 0 ? 1 : 3) : (fz > 0 ? 2 : 0);
-}
-const replaceable = (id) => id === B.AIR || id === B.WATER || BLOCKS[id].render === 'cross';
-
-function tryBreak(hit = getTarget()) {
-  if (!hit || !canEdit(hit.x, hit.y, hit.z, true)) return false;
-  const edits = [[hit.x, hit.y, hit.z, B.AIR, 0]];
-  if (hit.id === B.DOOR) {
-    const oy = hit.meta & 8 ? hit.y - 1 : hit.y + 1;
-    if (world.get(hit.x, oy, hit.z) === B.DOOR) edits.push([hit.x, oy, hit.z, B.AIR, 0]);
-  }
-  applyEdits(edits);
-  sfx.break(BLOCKS[hit.id].sound);
-  return true;
-}
-
-function toggleDoor(hit) {
-  const bottomY = hit.meta & 8 ? hit.y - 1 : hit.y;
-  const m = world.getMeta(hit.x, bottomY, hit.z) ^ 4;
-  const edits = [[hit.x, bottomY, hit.z, B.DOOR, m & ~8]];
-  if (world.get(hit.x, bottomY + 1, hit.z) === B.DOOR) edits.push([hit.x, bottomY + 1, hit.z, B.DOOR, m | 8]);
-  applyEdits(edits, { record: false });
-  sfx.door(!!(m & 4));
-  if (m & 4) achievements.unlock('door');
-  return true;
-}
-
-function tryPlace(hit = getTarget()) {
-  if (state.paste) return placePaste();
-  if (!hit) return false;
-  if (!(keys.ShiftLeft || keys.ShiftRight)) {
-    if (hit.id === B.DOOR) return toggleDoor(hit);
-    if (hit.id === B.GENERATOR) { sfx.generator(); toast('Brrrrrrr! I better pass my neighbour!'); achievements.unlock('generator'); return true; }
-  }
-  const id = state.hotbar[state.sel], b = BLOCKS[id];
-  let x, y, z;
-  if (BLOCKS[hit.id].render === 'cross') { x = hit.x; y = hit.y; z = hit.z; }
-  else {
-    if (hit.nx === 0 && hit.ny === 0 && hit.nz === 0) return false;
-    x = hit.x + hit.nx; y = hit.y + hit.ny; z = hit.z + hit.nz;
-  }
-  if (!replaceable(world.get(x, y, z)) || !canEdit(x, y, z, true)) return false;
-  let meta = 0;
-  if (b.render === 'slab') meta = hit.ny === -1 || (hit.ny === 0 && hit.hy - Math.floor(hit.hy) > 0.5) ? 1 : 0;
-  if (b.render === 'stairs' || b.render === 'door') meta = facing();
-  const edits = [[x, y, z, id, meta]];
-  if (b.render === 'door') {
-    if (!replaceable(world.get(x, y + 1, z)) || !canEdit(x, y + 1, z, true)) return false;
-    if (player.intersectsBlock(x, y + 1, z)) return false;
-    edits.push([x, y + 1, z, id, meta | 8]);
-  }
-  if (b.solid && player.intersectsBlock(x, y, z)) return false;
-  applyEdits(edits);
-  sfx.place(b.sound);
-  trackPlacement(id, y);
-  return true;
-}
-
-function trackPlacement(id, y) {
-  const s = achievements.stats;
-  s.placed++;
-  achievements.unlock('first_block');
-  if (s.placed >= 100) achievements.unlock('builder_100');
-  if (s.placed >= 1000) achievements.unlock('builder_1000');
-  if (y >= 21) achievements.unlock('tower');
-  if (BLOCKS[id].light) { s.lights++; if (s.lights >= 5) achievements.unlock('lights'); }
-  if (FABRICS.includes(id) && !s.fabrics.includes(id)) { s.fabrics.push(id); if (s.fabrics.length === FABRICS.length) achievements.unlock('fashion'); }
-}
-
-function pickBlock() {
-  const hit = getTarget();
-  if (!hit) return;
-  const id = hit.id;
-  if (!BLOCKS[id] || !BLOCKS[id].placeable) return;
-  const slot = state.hotbar.indexOf(id);
-  if (slot >= 0) state.sel = slot; else state.hotbar[state.sel] = id;
+function startPlaying(welcomeText) {
+  state.started = true;
+  claimScreen?.hide();
+  menu?.close();
+  sfx.unlock();
+  sfx.setVolume(settings.volume);
+  saveProfile();
+  showMode('playing');
+  rebuildAvatar();
   hud.renderHotbar();
+  updateOnlineUI();
+  if (welcomeText) toast(welcomeText);
+  requestLock();
 }
 
-// ---- area tool, copy / paste, blueprints
+// ------------------------------------------------------------------ playing online
 
-function areaBounds() {
-  const { a, b } = state.area;
-  return [Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.min(a[2], b[2]), Math.max(a[0], b[0]), Math.max(a[1], b[1]), Math.max(a[2], b[2])];
+function setNet(text, ok = false) {
+  const b = $('net-banner');
+  b.textContent = text || '';
+  b.classList.toggle('hidden', !text);
+  b.classList.toggle('ok', ok);
 }
 
-function areaKey() {
-  const hit = getTarget();
-  if (!state.area || state.area.b) {
-    if (state.area && state.area.b) { state.area = null; updateModeBar(); toast('Area cleared'); return; }
-    if (!hit) return toast('Look at a block to mark the first corner.');
-    state.area = { a: [hit.x, hit.y, hit.z], b: null };
-  } else {
-    if (!hit) return toast('Look at a block to mark the second corner.');
-    state.area.b = [hit.x, hit.y, hit.z];
+function updateOnlineUI() {
+  const on = !!G.online;
+  document.body.classList.toggle('online', on);
+  $('online-pill').classList.toggle('hidden', !on);
+  $('tab-account').classList.toggle('hidden', !on);
+  $('time-settings').classList.toggle('hidden', on);
+  $('time-note').classList.toggle('hidden', !on);
+  for (const el of document.querySelectorAll('.online-only')) el.classList.toggle('hidden', !on);
+  $('plot-none').classList.toggle('hidden', !(on && !G.myPlot));
+  $('p-plot').classList.toggle('no-plot', !G.myPlot);
+  chat?.show(on);
+  if (on) $('online-count').textContent = String(G.online.players.size);
+  $('plot-name').value = state.plotName;
+}
+
+async function enterOnline(setBusy) {
+  setBusy('Connecting to Lagos...');
+  const session = createOnline({ server, auth, look: state.look, owners: G.owners, hooks: onlineHooks });
+  G.online = session;
+  let welcome;
+  try {
+    welcome = await session.connect();
+  } catch (e) {
+    session.close();
+    G.online = null;
+    throw e;
   }
-  state.paste = null;
-  updateModeBar();
-}
-
-function areaCells(fn) {
-  const [x0, y0, z0, x1, y1, z1] = areaBounds();
-  const edits = [];
-  for (let y = Math.max(1, y0); y <= y1; y++) for (let z = z0; z <= z1; z++) for (let x = x0; x <= x1; x++) {
-    if (canEdit(x, y, z)) { const e = fn(x, y, z); if (e) edits.push(e); }
+  setBusy('Loading everyone\'s builds...');
+  const expected = welcome.plots.filter((p) => p.ver > 0).length;
+  await session.waitForPlots(expected);
+  accountPanel?.render();
+  if (!session.you.plot) {
+    menu.close();
+    showMode('claim');
+    claimScreen.show();
+    updateOnlineUI();
+    return;
   }
-  return edits;
+  spawnPlayer();
+  startPlaying(`Welcome back to Lagos, ${session.you.name}!`);
 }
 
-function fillArea(clear) {
-  if (!state.area || !state.area.b) return toast('Select an area first: press F on two corners.');
-  const id = clear ? B.AIR : state.hotbar[state.sel];
-  if (!clear && BLOCKS[id].render === 'door') return toast("Doors can't be used to fill.");
-  const edits = areaCells((x, y, z) => [x, y, z, id, 0]);
-  if (!edits.length) return deny('None of that area is on your plot.', true);
-  const n = applyEdits(edits);
-  if (n) { sfx[clear ? 'break' : 'place'](BLOCKS[clear ? B.STONE : id].sound); toast(`${clear ? 'Cleared' : 'Filled'} ${n} blocks. Ctrl+Z to undo.`); if (!clear) trackPlacement(id, areaBounds()[4]); }
+// The server's answer to a claim request: resolves when it arrives, rejects with the server's message on refusal.
+function claimPlot(target) {
+  return new Promise((resolve, reject) => {
+    pendingClaim = { resolve, reject, timer: setTimeout(() => { pendingClaim = null; reject(new Error('The server did not answer. Please try again.')); }, 9000) };
+    G.online.claim(target);
+  });
 }
 
-function copyArea() {
-  if (!state.area || !state.area.b) return toast('Select an area first: press F on two corners.');
-  const [x0, y0, z0, x1, y1, z1] = areaBounds();
-  const r = world.readRegion(x0, Math.max(1, y0), z0, x1, y1, z1);
-  if (!r.cells.length) return toast('That area is empty.');
-  state.clipboard = { ...r, name: 'Copied build' };
-  toast(`Copied ${r.cells.length} blocks. Press V to paste on your plot.`);
-}
-
-function startPaste(struct, label, blueprint = false) {
-  state.paste = { struct, rot: 0, label, blueprint };
-  state.area = null;
-  updateModeBar();
-}
-function startBlueprint(bp) {
-  startPaste(bp, bp.name, true);
-  if (state.mode === 'inventory') resumePlay();
-  toast(`${bp.name}: right-click on your plot to build. R rotates.`);
-}
-
-// Where would the current paste go? Centred on the targeted cell.
-function pastePlacement() {
-  if (!state.paste) return null;
-  const hit = getTarget();
-  if (!hit) return null;
-  const s = rotateStruct(state.paste.struct, state.paste.rot);
-  const tx = hit.x + hit.nx, ty = hit.y + hit.ny, tz = hit.z + hit.nz;
-  const ox = tx - Math.floor(s.w / 2), oz = tz - Math.floor(s.d / 2), oy = Math.max(1, ty);
-  let ok = true;
-  for (const [x, y, z] of s.cells) { if (!canEdit(ox + x, oy + y, oz + z)) { ok = false; break; } }
-  return { s, ox, oy, oz, ok };
-}
-
-function placePaste() {
-  const pl = pastePlacement();
-  if (!pl) return false;
-  if (!pl.ok) return deny('It has to fit completely inside your plot.', true);
-  const edits = pl.s.cells.map(([x, y, z, id, meta]) => [pl.ox + x, pl.oy + y, pl.oz + z, id, meta]);
-  const n = applyEdits(edits);
-  sfx.place('wood');
-  toast(`Built ${state.paste.label} (${n} blocks). Ctrl+Z to undo.`);
-  if (state.paste.blueprint) achievements.unlock('blueprint');
-  state.paste = null;
-  updateModeBar();
+function settleClaim(err) {
+  if (!pendingClaim) return false;
+  clearTimeout(pendingClaim.timer);
+  const p = pendingClaim;
+  pendingClaim = null;
+  if (err) p.reject(err); else p.resolve();
   return true;
 }
 
-function updateModeBar() {
-  const bar = $('mode-bar');
-  let text = '';
-  if (state.paste) text = `Placing ${state.paste.label} - right-click to build, R rotate, left-click cancel`;
-  else if (state.area && !state.area.b) text = 'Area: look at the opposite corner and press F';
-  else if (state.area) { const [x0, y0, z0, x1, y1, z1] = areaBounds(); text = `Area ${x1 - x0 + 1}x${y1 - y0 + 1}x${z1 - z0 + 1} - G fill, X clear, C copy, F reset`; }
-  bar.textContent = text;
-  bar.classList.toggle('hidden', !text);
+const REJECT_TEXT = {
+  not_owner: "That isn't your plot.", slow_down: 'Building too fast - slow down a little!', too_big: 'That was too much at once.',
+  bad_block: "That block can't be placed.", bad_edit: 'That change was not understood.', bad_plot: "That build couldn't be loaded.",
+};
+
+const onlineHooks = {
+  welcome(w, again) {
+    const you = w.you;
+    state.name = you.name;
+    if (you.look) { Object.assign(state.look, you.look); pauseLook?.render(); }
+    state.plotName = you.plotName || '';
+    if (you.achv && you.achv.got) for (const [id, t] of Object.entries(you.achv.got)) if (!achievements.got[id]) achievements.got[id] = t;
+    if (you.achv && you.achv.stats) {
+      const s = you.achv.stats, mine = achievements.stats;
+      mine.placed = Math.max(mine.placed || 0, s.placed || 0); mine.lights = Math.max(mine.lights || 0, s.lights || 0); mine.greeted = Math.max(mine.greeted || 0, s.greeted || 0);
+      for (const f of s.fabrics || []) if (!mine.fabrics.includes(f)) mine.fabrics.push(f);
+    }
+    // Land: every claimed plot gets its border and sign; a plot with nothing built on it starts empty.
+    const mineNumber = you.plot;
+    G.myPlot = mineNumber ? plotByNumber(mineNumber) : null;
+    const known = new Set(w.plots.map((p) => p.n));
+    for (const p of PLOTS) {
+      if (!p.claimable) continue;
+      const claimed = known.has(p.number);
+      const info = w.plots.find((q) => q.n === p.number);
+      if (claimed && info.ver === 0) build.clearPlotContents(p);                 // owner hasn't built anything yet
+      else if (!claimed && again && wasOwned.has(p.number)) build.clearPlotContents(p);   // released while we were disconnected
+      refreshPlotVisual(p);
+    }
+    wasOwned = new Set(known);
+    build.resetHistory();
+    remote.clear();
+    for (const pl of w.players) if (pl.pid !== you.pid) remote.add(pl);
+    chat.clear();
+    for (const c of w.chat) chat.say({ name: c.name, text: c.text, old: true, mine: c.pid === you.pid });
+    if (again) { setNet('Back online', true); setTimeout(() => setNet(''), 2200); }
+    updateOnlineUI();
+  },
+  status(s, reason) {
+    if (!G.online || !state.started) return;
+    if (s === 'reconnecting' || s === 'connecting') setNet('Connection lost. Reconnecting...');
+    else if (s === 'offline' && !reason) setNet('Offline');
+  },
+  fatal({ code, message }) {
+    setNet('');
+    document.exitPointerLock?.();
+    showDialog({
+      title: code === 'replaced' ? 'Signed in somewhere else' : code === 'full' ? 'Lagos is full' : 'Disconnected',
+      body: message,
+      actions: [{ id: 'reload', label: 'Reload the game', primary: true }],
+    }).then(() => location.reload());
+  },
+  latency(ms) { latencyMs = ms; },
+  plotData(plot, ids, metas) {
+    build.replacePlotContents(plot, ids, metas);
+    if (G.myPlot && G.myPlot.number === plot.number) build.resetHistory();
+  },
+  edits(plot, list) { build.applyRemoteEdits(list); },
+  owner(n, owner, name) {
+    const p = plotByNumber(n);
+    if (!p) return;
+    if (owner && !(G.myPlot && G.myPlot.number === n)) build.clearPlotContents(p);
+    wasOwned[owner ? 'add' : 'delete'](n);
+    for (const r of remote.players.values()) if (r.name === owner) r.plot = n; else if (r.plot === n) r.plot = null;
+    refreshPlotVisual(p);
+    claimScreen?.redraw();
+    renderPlayers();
+  },
+  claimed(n) {
+    const p = plotByNumber(n);
+    claimLocally(p);
+    settleClaim();
+    const first = !state.started;
+    claimScreen?.hide();
+    if (first) { spawnPlayer(); startPlaying(`Plot ${n} is yours, ${state.name}! Build anything you like.`); }
+    else { teleportToPlot(p); resumePlay(); toast(`Plot ${n} is yours! Build anything you like.`); }
+    queueProfileSync();
+  },
+  released() {
+    const prev = G.myPlot;
+    G.myPlot = null;
+    if (prev) { build.clearPlotContents(prev); refreshPlotVisual(prev); }
+    state.plotName = '';
+    build.resetHistory();
+    updateOnlineUI();
+    toast('You gave up your plot. You can claim a new one from the Plot tab.');
+  },
+  saved(plotName) { state.plotName = plotName; if (G.myPlot) drawPlotLabel(G.myPlot); },
+  join(p) {
+    remote.add(p);
+    $('online-count').textContent = String(G.online.players.size);
+    if (state.started) chat.system(`${p.name} joined Lagos`);
+    renderPlayers();
+  },
+  leave(pid, p) {
+    remote.remove(pid);
+    $('online-count').textContent = String(G.online.players.size);
+    if (state.started && p) chat.system(`${p.name} left`);
+    renderPlayers();
+  },
+  look(pid, look) { remote.setLook(pid, look); },
+  snapshot(list) { remote.snapshot(list, performance.now()); },
+  chat(m) {
+    if (mutes.has(m.name.toLowerCase())) return;
+    const mine = G.online && m.pid === G.online.you.pid;
+    chat.say({ name: m.name, text: m.text, mine });
+    const rec = remote.get(m.pid);
+    if (rec && rec.shown) bubbles.show(rec, m.text, performance.now() + 5000, 'chat');
+    if (!mine && state.started) sfx.click();
+  },
+  emote(pid, id) {
+    const r = remote.emote(pid, id, performance.now());
+    if (r && r.rec.shown) bubbles.show(r.rec, r.def.text, performance.now() + 2600, 'emote');
+  },
+  notice(text) { toast(text); chat.system(text); },
+  reject(plot, reason) { toast(REJECT_TEXT[reason] || 'That change was not accepted.', 'bad'); },
+  error(code, message) {
+    if (settleClaim(new Error(message))) { claimScreen?.fail(message); return; }
+    toast(message, 'bad');
+  },
+};
+let wasOwned = new Set();
+let latencyMs = 0;
+
+function sendChat(text) {
+  if (!G.online) return;
+  if (text.startsWith('/')) {
+    const [cmd, ...rest] = text.slice(1).split(' ');
+    if (cmd === 'me' && rest.length) { G.online.chat(`*${rest.join(' ')}*`); return; }
+    if (cmd === 'help' || cmd === '?') { chat.system('Chat: just type and press Enter. Press Tab to see who is online, B for emotes.'); return; }
+    chat.system(`Unknown command "/${cmd}". Try /help.`);
+    return;
+  }
+  G.online.chat(text);
 }
 
-// ---- sharing
-
-function exportCode() {
-  return `NJC2:${encodeURIComponent(state.plotName)}:${world.exportPlot(myPlot)}`;
+function onChatOpenChange(open) {
+  if (open) {
+    if (state.mode === 'playing') { showMode('chat'); if (document.pointerLockElement) document.exitPointerLock(); }
+  } else if (state.mode === 'chat') { showMode('playing'); requestLock(); }
 }
-function importCode(code) {
-  const m = /^NJC2:([^:]*):([A-Za-z0-9+/=]+)$/.exec(code.trim());
-  if (!m) return false;
-  const decoded = World.decodePlot(m[2], 2);
-  if (!decoded) return false;
-  world.applyPlot(myPlot, decoded);
-  afterChange(myPlot.x, myPlot.z, myPlot.x + PLOT - 1, myPlot.z + PLOT - 1);
-  undoStack.length = 0; redoStack.length = 0;
-  savePlotNow();
-  return decodeURIComponent(m[1]) || true;
+
+function openChat() {
+  if (state.mode !== 'playing') return;
+  if (!G.online) { toast('Chat works when you play online.'); return; }
+  chat.open();
+}
+
+// ------------------------------------------------------------------ players list, emotes
+
+const muteKey = (name) => name.toLowerCase();
+
+function renderPlayers() {
+  if (state.mode !== 'players' || !G.online) return;
+  const list = $('players-list');
+  list.innerHTML = '';
+  const you = G.online.you;
+  const rows = [{ pid: you.pid, name: you.name, plot: you.plot, guest: you.guest, me: true }, ...[...G.online.players.values()].filter((p) => p.pid !== you.pid)];
+  rows.sort((a, b) => (b.me ? 1 : 0) - (a.me ? 1 : 0) || a.name.localeCompare(b.name));
+  const located = new Map(remote.located(performance.now()).map((o) => [o.pid, o]));
+  for (const p of rows) {
+    const row = document.createElement('div');
+    row.className = 'prow' + (p.me ? ' me' : '');
+    const dot = document.createElement('div'); dot.className = 'dot'; dot.style.background = p.me ? '#b88a00' : nameColor(p.name).replace('74%', '38%'); dot.textContent = p.name.slice(0, 1).toUpperCase();
+    const who = document.createElement('div'); who.className = 'who';
+    const b = document.createElement('b'); b.textContent = p.name + (p.me ? ' (you)' : '');
+    const s = document.createElement('small'); s.textContent = (p.plot ? `Plot ${p.plot}` : 'No plot yet') + (p.guest ? ' - guest' : '');
+    who.append(b, s);
+    row.append(dot, who);
+    const add = (label, fn, cls = '') => { const btn = document.createElement('button'); btn.className = 'btn ' + cls; btn.textContent = label; btn.addEventListener('click', fn); row.appendChild(btn); };
+    if (p.plot && !(p.me && !G.myPlot)) add('Visit', () => { teleportToPlot(plotByNumber(p.plot)); resumePlay(); });
+    if (!p.me) {
+      if (located.has(p.pid)) add('Go to', () => { const o = located.get(p.pid); teleport(o.x, o.z + 2); resumePlay(); });
+      add(mutes.has(muteKey(p.name)) ? 'Unmute' : 'Mute', () => { toggleMute(p.name); renderPlayers(); });
+      add('Report', () => reportPlayer(p), 'danger');
+    }
+    list.appendChild(row);
+  }
+}
+
+function toggleMute(name) {
+  const k = muteKey(name);
+  if (mutes.has(k)) { mutes.delete(k); toast(`${name} unmuted`); } else { mutes.add(k); toast(`${name} muted: you won't see their chat`); }
+  storage.saveMutes([...mutes]);
+}
+
+async function reportPlayer(p) {
+  const reasons = ['Bad language or bullying', 'Spam', 'Offensive name or plot sign', 'Something else'];
+  const sel = document.createElement('select');
+  for (const r of reasons) { const o = document.createElement('option'); o.textContent = r; sel.appendChild(o); }
+  const pick = await showDialog({
+    title: `Report ${p.name}?`, body: ['A moderator will look at recent chat and what happened.', sel],
+    actions: [{ id: 'no', label: 'Cancel' }, { id: 'yes', label: 'Send report', danger: true }],
+  });
+  if (pick === 'yes') { G.online.report(p.pid, sel.value); }
+}
+
+function openPlayers() {
+  if (!G.online) return toast('Other builders appear when you play online.');
+  openOverlay('players');
+  renderPlayers();
+}
+
+function openEmotes() {
+  if (state.mode !== 'playing') return;
+  const ring = $('emote-ring');
+  ring.innerHTML = '';
+  EMOTES.forEach((e, i) => {
+    const a = (i / EMOTES.length) * Math.PI * 2 - Math.PI / 2;
+    const b = document.createElement('button');
+    b.className = 'emote-btn';
+    b.style.transform = `translate(${Math.cos(a) * 112}px, ${Math.sin(a) * 112}px)`;
+    b.innerHTML = `<b>${i + 1}</b>${e.label}`;
+    b.addEventListener('click', () => { playEmote(e.id); resumePlay(); });
+    ring.appendChild(b);
+  });
+  openOverlay('emote');
+}
+
+function playEmote(id) {
+  const def = EMOTES.find((e) => e.id === id);
+  if (!def) return;
+  const now = performance.now();
+  state.emote = { id, kind: def.kind, start: now, until: now + EMOTE_SECONDS * 1000 };
+  if (G.online) G.online.emote(id);
+  if (state.camMode === 0) { state.camMode = 1; avatar.setVisible(true); }     // so you can see yourself dance
 }
 
 // ------------------------------------------------------------------ main loop
 
 let orbitTarget = null;
-let hudTimer = 0, visTimer = 0, saveTimer = 0, achvTimer = 0, mapTimer = 0, orbit = 0, stepAcc = 0, wasInWater = false;
+let frameCount = 0;
+let hudTimer = 0, visTimer = 0, saveTimer = 0, achvTimer = 0, mapTimer = 0, compassTimer = 0, orbit = 0, stepAcc = 0, wasInWater = false;
 
 function lightAt(x, y, z) {
   const l = world.lightAt(x, y, z);
@@ -610,27 +778,33 @@ function inputState() {
   };
 }
 
+const hash01 = (n) => { const s = Math.sin(n * 127.1 + 311.7) * 43758.5453; return s - Math.floor(s); };
+
 function tick() {
   const dt = Math.min(0.05, engine.getDeltaTime() / 1000 || 0.016);
   const now = performance.now();
   clockTime += dt;
+  const online = G.online;
+  const live = state.mode === 'playing' || state.mode === 'chat';
 
-  if (!settings.freezeTime) state.time = (state.time + dt / DAY_LENGTH) % 1;
+  if (online) state.time = online.dayFraction();
+  else if (!settings.freezeTime) state.time = (state.time + dt / DAY_LENGTH) % 1;
   updateWeather(dt);
   env = computeEnv(state.time, state.rain);
-  const playing = state.mode === 'playing';
 
-  if (playing) {
-    player.update(dt, inputState());
+  if (live) {
+    const playing = state.mode === 'playing';
+    player.update(dt, playing ? inputState() : IDLE_INPUT);
     footsteps(dt);
-    const hit = getTarget();
+    const hit = build.getTarget();
     updateSelection(hit);
     const t = touch || {};
     const wantBreak = mouse.left || t.break, wantPlace = mouse.right || t.place;
-    if ((wantBreak || wantPlace) && now >= mouse.next) {
+    if (playing && (wantBreak || wantPlace) && now >= mouse.next) {
       mouse.next = now + 160;
-      if (wantBreak) { if (state.paste) { state.paste = null; updateModeBar(); } else tryBreak(hit); } else tryPlace(hit);
+      if (wantBreak) { if (state.paste) { state.paste = null; build.updateModeBar(); } else build.tryBreak(hit); } else build.tryPlace(hit);
     }
+    if (state.emote && (now > state.emote.until || player.moving > 1.2 || (t.f || t.s))) state.emote = null;
   } else {
     selBox.setEnabled(false);
   }
@@ -638,9 +812,9 @@ function tick() {
 
   // camera
   if (!state.started) {
-    orbit += dt * 0.05;
-    camera.position.set(84 + Math.sin(orbit) * 80, 38, 110 + Math.cos(orbit) * 80);
-    camera.setTarget(orbitTarget || (orbitTarget = new BABYLON.Vector3(84, 6, 120)));
+    orbit += dt * 0.045;
+    camera.position.set(PLAZA + 4 + Math.sin(orbit) * 95, 40, PLAZA + 18 + Math.cos(orbit) * 95);
+    camera.setTarget(orbitTarget || (orbitTarget = new BABYLON.Vector3(PLAZA + 4, 7, PLAZA + 4)));
   } else {
     placeCamera();
   }
@@ -649,16 +823,18 @@ function tick() {
   if (avatar && state.started) {
     avatar.root.position.set(pl.x, pl.y, pl.z);
     avatar.root.rotation.y = player.yaw;
-    avatar.animate(dt, playing ? player.moving : 0);
+    avatar.animate(dt, live ? player.moving : 0, state.emote ? { kind: state.emote.kind, t: (now - state.emote.start) / 1000 } : null);
     avatar.setLight(lightAt(pl.x, pl.y + 1, pl.z));
   }
-  const npcEvents = residents.update(dt, pl, state.time, lightAt);
+
+  const shared = (online ? online.serverNow() : Date.now()) / 1000;
+  const npcEvents = residents.update(shared, dt, pl, state.time, lightAt);
   for (const e of npcEvents) {
     bubbles.show(e.greeted, `${e.greeted.name}: ${e.greeted.line}`, now + 4500);
     if (state.started) { achievements.stats.greeted++; if (achievements.stats.greeted >= 5) achievements.unlock('greet'); }
   }
-  const tl = lightAt(84, 30, 84);
-  const trafficEvents = traffic.update(dt, pl, tl, env.night > 0.5);
+  const tl = lightAt(PLAZA, 30, PLAZA);
+  const trafficEvents = traffic.update(shared, dt, pl, tl, env.night > 0.5);
   for (const e of trafficEvents) {
     if (!state.started) continue;
     sfx.horn();
@@ -671,7 +847,19 @@ function tick() {
       bubbles.show(v, v.call, now + 3000);
     }
   }
+  if (remote) remote.update(dt, now, camera.position);
+  updateNameTags();
   bubbles.update(now, projectBubble);
+
+  if (online && online.ready && state.started && now >= nextPosSend) {
+    nextPosSend = now + 200;
+    online.sendPos({
+      x: pl.x, y: pl.y, z: pl.z, yaw: player.yaw, pitch: player.pitch,
+      flags: (player.flying ? FLAG.FLYING : 0) | (player.inWater ? FLAG.SWIMMING : 0) | (keys.ShiftLeft && player.moving > 1 ? FLAG.SPRINT : 0) | (player.onGround ? FLAG.GROUND : 0),
+      emote: state.emote ? state.emote.id : 0,
+    });
+  }
+  if (nextProfileSend && now >= nextProfileSend) syncProfile();
 
   rainPS.emitter.set(camera.position.x, camera.position.y + 16, camera.position.z);
   const indoors = world.lightAt(camera.position.x, camera.position.y, camera.position.z).sky < 14;
@@ -685,7 +873,11 @@ function tick() {
   scene.clearColor.set(env.horizon[0], env.horizon[1], env.horizon[2], 1);
 
   if ((hudTimer -= dt) <= 0) { hudTimer = 0.12; updateHud(); }
-  if ((mapTimer -= dt) <= 0 && state.started) { mapTimer = 0.25; minimap.draw($('minimap'), player, { vehicles: traffic.vehicles, residents: residents.residents }); }
+  if ((compassTimer -= dt) <= 0 && state.started) { compassTimer = 0.05; drawCompass(); }
+  if ((mapTimer -= dt) <= 0 && state.started) {
+    mapTimer = 0.25;
+    minimap.drawLocal($('minimap'), player, mapExtras());
+  }
   if ((visTimer -= dt) <= 0) {
     visTimer = 0.4;
     for (let k = 0; k < NCX * NCZ; k++) applyChunkVisibility(k);
@@ -702,19 +894,29 @@ function tick() {
   }
   if (state.started && (saveTimer -= dt) <= 0) { saveTimer = 5; saveProfile(); }
   if (state.started && (achvTimer -= dt) <= 0) { achvTimer = 0.5; checkPlaceAchievements(); }
+  chat.update(now);
   const beachDist = Math.max(0, SZ - pl.z);
   sfx.ambience(dt, { night: env.night, rain: state.rain, beachDist: state.started ? beachDist : 200, indoors });
   $('water-tint').classList.toggle('hidden', !(state.started && player.headInWater && state.camMode === 0));
-  scene.render();
+  // Behind a full-screen overlay nobody is looking at the world closely, so draw it at a quarter of the speed.
+  const covered = state.started && state.mode !== 'playing' && state.mode !== 'chat';
+  if (!covered || (frameCount++ & 3) === 0) scene.render();
+}
+
+function mapExtras() {
+  return {
+    vehicles: traffic.vehicles, residents: residents.residents, myPlot: G.myPlot, owners: G.owners, plotName: state.plotName,
+    others: remote ? remote.located(performance.now()) : [],
+  };
 }
 
 function placeCamera() {
-  const e = eyePos();
+  const e = build.eyePos();
   if (state.camMode === 0) {
     camera.position.set(e.x, e.y, e.z);
     camera.rotation.set(player.pitch, player.yaw, 0);
   } else {
-    const d = lookDir();
+    const d = build.lookDir();
     const sign = state.camMode === 1 ? -1 : 1;
     const dir = { x: d.x * sign, y: d.y * sign, z: d.z * sign };
     let dist = 4.5;
@@ -727,9 +929,10 @@ function placeCamera() {
 }
 
 function updateSelection(hit) {
+  if (state.mode !== 'playing') { selBox.setEnabled(false); return; }
   if (state.paste) {
     selBox.setEnabled(false);
-    const pl = pastePlacement();
+    const pl = build.pastePlacement();
     if (pl) {
       areaBox.setEnabled(true);
       areaBox.position.set(pl.ox, pl.oy, pl.oz);
@@ -744,18 +947,18 @@ function updateSelection(hit) {
   if (r === 'cross') bx = [0.15, 0, 0.15, 0.85, 0.9, 0.85];
   else if (r !== 'cube') {
     bx = [1, 1, 1, 0, 0, 0];
-    for (const b of shapeBoxes(hit.id, hit.meta)) for (let i = 0; i < 3; i++) { bx[i] = Math.min(bx[i], b[i]); bx[i + 3] = Math.max(bx[i + 3], b[i + 3]); }
+    for (const b of shapeBoxes(hit.id, hit.meta, world.connMask(hit.x, hit.y, hit.z, hit.id))) for (let i = 0; i < 3; i++) { bx[i] = Math.min(bx[i], b[i]); bx[i + 3] = Math.max(bx[i + 3], b[i + 3]); }
   }
   selBox.setEnabled(true);
   selBox.position.set(hit.x + bx[0], hit.y + bx[1], hit.z + bx[2]);
   selBox.scaling.set(bx[3] - bx[0], bx[4] - bx[1], bx[5] - bx[2]);
-  selBox.color = canEdit(hit.x, hit.y, hit.z) || hit.id === B.DOOR ? BABYLON.Color3.Black() : new BABYLON.Color3(0.85, 0.1, 0.1);
+  selBox.color = build.canEdit(hit.x, hit.y, hit.z) || hit.id === B.DOOR ? BABYLON.Color3.Black() : new BABYLON.Color3(0.85, 0.1, 0.1);
 }
 
 function updateAreaBox() {
   if (state.paste) return;
   if (!state.area) { areaBox.setEnabled(false); return; }
-  const b = state.area.b || (state.mode === 'playing' ? (() => { const h = getTarget(); return h ? [h.x, h.y, h.z] : state.area.a; })() : state.area.a);
+  const b = state.area.b || (state.mode === 'playing' ? (() => { const h = build.getTarget(); return h ? [h.x, h.y, h.z] : state.area.a; })() : state.area.a);
   const a = state.area.a;
   areaBox.setEnabled(true);
   areaBox.color = new BABYLON.Color3(0.2, 0.8, 1);
@@ -763,20 +966,47 @@ function updateAreaBox() {
   areaBox.scaling.set(Math.abs(a[0] - b[0]) + 1, Math.abs(a[1] - b[1]) + 1, Math.abs(a[2] - b[2]) + 1);
 }
 
-function projectBubble(key) {
-  let pos;
-  if (key.char) pos = new BABYLON.Vector3(key.x, 3.3, key.z);
-  else if (key.root) pos = new BABYLON.Vector3(key.x, 4.2, key.z);
-  else return null;
+// Screen position of a world point in CSS pixels, or null when it is behind the camera / too far away.
+function project(pos, maxDist = 40) {
   const cam = camera.position;
   const fwd = camera.getDirection(BABYLON.Axis.Z);
   const rel = pos.subtract(cam);
-  if (BABYLON.Vector3.Dot(rel, fwd) < 0.5 || rel.length() > 40) return null;
+  if (BABYLON.Vector3.Dot(rel, fwd) < 0.5 || rel.length() > maxDist) return null;
   const w = engine.getRenderWidth(), h = engine.getRenderHeight();
   const p = BABYLON.Vector3.Project(pos, BABYLON.Matrix.Identity(), scene.getTransformMatrix(), camera.viewport.toGlobal(w, h));
-  const c = engine.getRenderingCanvas();
-  const k = c.clientWidth / w;
+  const k = engine.getRenderingCanvas().clientWidth / w;
   return { x: p.x * k, y: p.y * k };
+}
+
+function projectBubble(key) {
+  if (key.pid !== undefined) return project(new BABYLON.Vector3(key.x, key.y + 2.55, key.z));       // another player
+  if (key.char) return project(new BABYLON.Vector3(key.x, 3.3, key.z));                              // resident
+  if (key.root) return project(new BABYLON.Vector3(key.x, 4.2, key.z));                              // vehicle
+  return null;
+}
+
+// Names float over other players who are close enough to read.
+function updateNameTags() {
+  const used = new Set();
+  if (remote && state.started) {
+    for (const r of remote.visible()) {
+      if (r.dist > 42) continue;
+      const p = project(new BABYLON.Vector3(r.x, r.y + 2.2, r.z), 42);
+      if (!p) continue;
+      let el = tagEls.get(r.pid);
+      if (!el) {
+        el = document.createElement('div');
+        el.className = 'nametag' + (r.guest ? ' guest' : '');
+        el.textContent = r.name;
+        $('bubbles').appendChild(el);
+        tagEls.set(r.pid, el);
+      }
+      el.style.transform = `translate(${p.x}px, ${p.y}px) translate(-50%, -100%)`;
+      el.style.opacity = String(Math.max(0.25, 1 - r.dist / 48));
+      used.add(r.pid);
+    }
+  }
+  for (const [pid, el] of tagEls) if (!used.has(pid)) { el.remove(); tagEls.delete(pid); }
 }
 
 function footsteps(dt) {
@@ -794,14 +1024,19 @@ function footsteps(dt) {
 function updateWeather(dt) {
   if (settings.weather === 'clear') state.rainTarget = 0;
   else if (settings.weather === 'rain') state.rainTarget = 1;
-  else {
+  else if (G.online) {
+    // Everyone shares one sky: the weather is a pure function of the server clock, in 8 minute slots.
+    const slot = Math.floor(G.online.serverNow() / 480000);
+    state.rainTarget = hash01(slot) < 0.3 ? 0.55 + 0.45 * hash01(slot + 0.5) : 0;
+  } else {
     state.weatherTimer -= dt;
     if (state.weatherTimer <= 0) {
       if (state.rainTarget > 0) { state.rainTarget = 0; state.weatherTimer = 180 + Math.random() * 300; }
-      else if (Math.random() < 0.35) { state.rainTarget = 0.6 + Math.random() * 0.4; state.weatherTimer = 50 + Math.random() * 70; if (state.started) toast('Rain dey come o! Lagos shower incoming.'); }
+      else if (Math.random() < 0.35) { state.rainTarget = 0.6 + Math.random() * 0.4; state.weatherTimer = 50 + Math.random() * 70; }
       else state.weatherTimer = 120 + Math.random() * 200;
     }
   }
+  if (state.rainTarget > 0.3 && state.rain < 0.05 && state.started && performance.now() - lastRainToast > 120000) { lastRainToast = performance.now(); toast('Rain dey come o! Lagos shower incoming.'); }
   state.rain += Math.sign(state.rainTarget - state.rain) * Math.min(Math.abs(state.rainTarget - state.rain), dt * 0.15);
 }
 
@@ -815,36 +1050,79 @@ function checkPlaceAchievements() {
   if (y > 40) achievements.unlock('fly');
 }
 
+// ------------------------------------------------------------------ HUD
+
+function plotHeadline(p, px, pz) {
+  if (!p) return { title: pz >= CITY ? 'Bar Beach' : 'Lagos road', sub: 'Public space', mine: false };
+  const mine = !!(G.myPlot && p.number === G.myPlot.number);
+  const o = G.owners.get(p.number);
+  if (mine) return { title: state.plotName || 'Your plot', sub: 'Your land: build freely', mine: true };
+  if (o) return { title: o.name || `${o.owner}'s plot`, sub: `Owned by ${o.owner}`, mine: false };
+  if (p.claimable) return { title: `Plot ${String(p.number).padStart(2, '0')}`, sub: G.online ? 'Free land - claim it from the map' : 'Free land', mine: false };
+  return { title: p.name || `${p.owner}'s home`, sub: p.name ? 'Landmark' : 'Show home', mine: false };
+}
+
 function updateHud() {
   if (!state.started) return;
   const px = Math.floor(player.pos.x), pz = Math.floor(player.pos.z);
   const p = plotAt(px, pz);
-  const mine = p && p.number === PLAYER_PLOT;
-  $('info').classList.toggle('mine', !!mine);
-  const plotTitle = p ? (mine && state.plotName ? state.plotName : `Plot ${String(p.number).padStart(2, '0')}${p.name ? ' - ' + p.name : ''}`) : pz >= CITY ? 'Bar Beach' : 'Lagos road';
-  $('info-plot').textContent = plotTitle;
-  $('info-sub').textContent = `${districtAt(px, pz)} - ${mine ? 'Your land: build freely' : p ? (p.owner ? 'Owned by ' + p.owner : p.kind === 'free' ? 'Unclaimed land' : 'Public space') : 'Public space'}`;
-  const h = state.time * 24;
-  const icon = state.rain > 0.3 ? 'Rain' : h > 6.6 && h < 19 ? 'Sunny' : 'Night';
-  $('info-clock').textContent = `${clockString(state.time)} Lagos  |  ${icon}`;
-  $('info-pos').textContent = `${state.name || 'Guest'}  |  x ${px}  y ${Math.floor(player.pos.y)}  z ${pz}  |  ${Math.round(engine.getFps())} fps${player.flying ? '  |  flying' : ''}${player.inWater ? '  |  swimming' : ''}`;
+  const h = plotHeadline(p, px, pz);
+  $('info').classList.toggle('mine', h.mine);
+  $('info-plot').textContent = h.title;
+  $('info-sub').textContent = `${districtAt(px, pz)} - ${h.sub}`;
+  const hr = state.time * 24;
+  $('info-clock').textContent = `${clockString(state.time)} Lagos`;
+  $('info-weather').textContent = state.rain > 0.3 ? 'Rain' : hr > 6.6 && hr < 19 ? 'Sunny' : 'Night';
+  const extra = (G.online && latencyMs ? `  ${latencyMs}ms` : '') + (player.flying ? '  flying' : '') + (player.inWater ? '  swimming' : '');
+  $('info-pos').textContent = `${px}, ${Math.floor(player.pos.y)}, ${pz}  ${Math.round(engine.getFps())}fps${extra}`;
+  const hint = $('hint-bar');
+  const want = G.online ? '<span><kbd>Enter</kbd> chat</span><span><kbd>Tab</kbd> players</span><span><kbd>B</kbd> emote</span><span><kbd>M</kbd> map</span><span><kbd>H</kbd> help</span>'
+    : '<span><kbd>E</kbd> blocks</span><span><kbd>M</kbd> map</span><span><kbd>H</kbd> help</span>';
+  if (hint.dataset.v !== want) { hint.dataset.v = want; hint.innerHTML = want; }
 }
 
-// ------------------------------------------------------------------ input & screens
+// A compass strip: which way you are looking (north is toward the top of the map).
+function drawCompass() {
+  const c = $('compass');
+  if (!c.offsetParent && c.offsetWidth === 0) return;
+  const g = c.getContext('2d');
+  const W = c.width, H = c.height;
+  g.clearRect(0, 0, W, H);
+  const heading = ((180 + (player.yaw * 180) / Math.PI) % 360 + 360) % 360;       // degrees clockwise from north (+x is west)
+  const ppd = W / 150;
+  g.font = '800 15px Nunito, system-ui, sans-serif';
+  g.textAlign = 'center'; g.textBaseline = 'middle';
+  for (let d = -80; d <= 80; d++) {
+    const deg = Math.round(heading + d);
+    if (deg % 5 !== 0) continue;
+    const x = W / 2 + (deg - heading) * ppd;
+    if (x < 6 || x > W - 6) continue;
+    const a = ((deg % 360) + 360) % 360;
+    const fade = 1 - Math.abs(x - W / 2) / (W / 2);
+    const cardinal = { 0: 'N', 90: 'E', 180: 'S', 270: 'W' }[a];
+    g.globalAlpha = Math.max(0.15, fade);
+    if (cardinal) { g.fillStyle = cardinal === 'N' ? '#ffc83d' : '#fff'; g.fillText(cardinal, x, H / 2); } else if (a % 45 === 0) { g.fillStyle = '#cfe9dc'; g.fillText({ 45: 'NE', 135: 'SE', 225: 'SW', 315: 'NW' }[a], x, H / 2); } else { g.fillStyle = '#fff'; g.fillRect(x - 0.5, H / 2 - (a % 15 === 0 ? 6 : 3), 1, a % 15 === 0 ? 12 : 6); }
+  }
+  g.globalAlpha = 1;
+  g.fillStyle = '#ffc83d';
+  g.beginPath(); g.moveTo(W / 2 - 6, 0); g.lineTo(W / 2 + 6, 0); g.lineTo(W / 2, 8); g.closePath(); g.fill();
+}
+
+// ------------------------------------------------------------------ screens and input
 
 function selectSlot(i) {
   state.sel = (i + 9) % 9;
   hud.renderHotbar();
 }
 
-const SCREENS = ['menu', 'pause', 'inventory', 'map', 'help'];
+const OVERLAYS = { menu: 'menu', claim: 'claim', paused: 'pause', inventory: 'inventory', map: 'map', help: 'help', players: 'players', emote: 'emotes' };
 function showMode(mode) {
   state.mode = mode;
-  for (const s of SCREENS) $(s).classList.toggle('hidden', s !== (mode === 'paused' ? 'pause' : mode));
-  $('hud').classList.toggle('hidden', mode === 'menu' || mode === 'loading');
-  $('touch').classList.toggle('hidden', !(isTouch && mode === 'playing'));
-  if (mode !== 'playing') { Object.keys(keys).forEach((k) => (keys[k] = false)); mouse.left = mouse.right = false; }
-  if (mode === 'paused') { renderAchievements($('achv-list'), achievements.got); $('achv-count').textContent = `${achievements.count()}`; syncSettingsUI(); }
+  for (const [m, id] of Object.entries(OVERLAYS)) $(id).classList.toggle('hidden', m !== mode);
+  $('hud').classList.toggle('hidden', mode === 'menu' || mode === 'loading' || mode === 'claim');
+  $('touch').classList.toggle('hidden', !(isTouch && (mode === 'playing' || mode === 'chat')));
+  if (mode !== 'playing' && mode !== 'chat') { Object.keys(keys).forEach((k) => (keys[k] = false)); mouse.left = mouse.right = false; }
+  if (mode === 'paused') { renderAchievements($('achv-list'), achievements.got); $('achv-count').textContent = `${achievements.count()}`; syncSettingsUI(); accountPanel?.render(); }
   if (mode === 'map') drawBigMap();
 }
 
@@ -856,35 +1134,14 @@ function requestLock() {
     if (p && p.catch) p.catch(() => { if (state.started && state.mode === 'playing') showMode('paused'); });
   } catch { showMode('paused'); }
 }
-function resumePlay() { showMode('playing'); requestLock(); }
+function resumePlay() { if (chat?.isOpen) chat.close(); showMode('playing'); requestLock(); }
 function openOverlay(mode) {
   showMode(mode);
   if (document.pointerLockElement) document.exitPointerLock();
 }
 
-function enterGame() {
-  const name = $('username').value.trim();
-  if (!/^[A-Za-z0-9_]{3,16}$/.test(name)) {
-    $('name-error').textContent = 'Use 3-16 letters, numbers or underscores.';
-    return false;
-  }
-  $('name-error').textContent = '';
-  state.name = name;
-  state.started = true;
-  sfx.unlock();
-  sfx.setVolume(settings.volume);
-  drawPlotLabel(myPlot);
-  saveProfile();
-  showMode('playing');
-  rebuildAvatar();
-  hud.renderHotbar();
-  toast(`Welcome to Lagos, ${name}! Your plot has the yellow border.`);
-  requestLock();
-  return true;
-}
-
 function drawBigMap() {
-  minimap.draw($('bigmap'), player, { vehicles: traffic.vehicles, residents: residents.residents, plotName: state.plotName }, true);
+  minimap.drawFull($('bigmap'), player, mapExtras());
 }
 
 function teleport(x, z) {
@@ -896,7 +1153,19 @@ function teleport(x, z) {
   player.flying = false;
 }
 
+function teleportToPlot(p) {
+  const f = plotFront(p);
+  teleport(f.x, f.z);
+  player.yaw = f.yaw; player.pitch = 0.1;
+}
+
+function applyQuality() {
+  applyResolution();
+  applyViewDistance();
+}
+
 function syncSettingsUI() {
+  $('set-quality').value = settings.quality || 'auto';
   $('set-view').value = settings.viewChunks; $('set-res').value = String(settings.resolution); $('set-sens').value = settings.sensitivity;
   $('set-vol').value = settings.volume; $('set-time').value = state.time; $('set-freeze').checked = !!settings.freezeTime; $('set-weather').value = settings.weather;
   $('set-view-val').textContent = settings.viewChunks * CHUNK + ' blocks';
@@ -904,60 +1173,73 @@ function syncSettingsUI() {
   $('plot-name').value = state.plotName;
 }
 
+const isTextTarget = (t) => t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable);
+
 function bindUI() {
   const canvas = $('game');
-  $('play').addEventListener('click', enterGame);
-  $('username').addEventListener('keydown', (e) => { if (e.key === 'Enter') enterGame(); e.stopPropagation(); });
-  $('username').addEventListener('keyup', (e) => e.stopPropagation());
   for (const id of ['plot-name', 'code-box']) {
     $(id).addEventListener('keydown', (e) => e.stopPropagation());
     $(id).addEventListener('keyup', (e) => e.stopPropagation());
   }
   $('resume').addEventListener('click', resumePlay);
+  $('pause-close').addEventListener('click', resumePlay);
   document.querySelectorAll('[data-close]').forEach((b) => b.addEventListener('click', resumePlay));
   $('open-map').addEventListener('click', () => showMode('map'));
   $('open-help').addEventListener('click', () => showMode('help'));
+  $('open-players').addEventListener('click', openPlayers);
+  $('online-pill').addEventListener('click', openPlayers);
   $('take-photo').addEventListener('click', () => { resumePlay(); setTimeout(takePhoto, 300); });
+  $('plot-claim').addEventListener('click', () => { showMode('claim'); claimScreen.show(); if (document.pointerLockElement) document.exitPointerLock(); });
 
   // pause tabs
   document.querySelectorAll('#pause-tabs button').forEach((b) => b.addEventListener('click', () => {
     document.querySelectorAll('#pause-tabs button').forEach((o) => o.classList.toggle('active', o === b));
     document.querySelectorAll('.ptab').forEach((s) => s.classList.toggle('hidden', s.id !== b.dataset.tab));
   }));
-  mountLookPicker($('pause-look'), state.look, () => { rebuildAvatar(); saveProfile(); });
 
   // plot tab
   $('save-plot-name').addEventListener('click', () => {
     state.plotName = $('plot-name').value.trim().slice(0, 24);
-    drawPlotLabel(myPlot); saveProfile();
+    if (G.myPlot) drawPlotLabel(G.myPlot);
+    saveProfile();
+    if (G.online) G.online.profile({ plotName: state.plotName });
     if (state.plotName) { achievements.unlock('name'); toast(`Your plot is now "${state.plotName}"`); }
   });
   $('copy-code').addEventListener('click', async () => {
-    const code = exportCode();
+    if (!G.myPlot) return toast('Claim a plot first.', 'bad');
+    const code = build.exportCode();
     $('code-box').value = code;
     $('code-box').select();
     try { await navigator.clipboard.writeText(code); toast('Build code copied! Paste it to a friend.'); } catch { toast('Build code is in the box - copy it from there.'); }
     achievements.unlock('share');
   });
-  $('load-code').addEventListener('click', () => {
+  $('load-code').addEventListener('click', async () => {
+    if (!G.myPlot) return toast('Claim a plot first.', 'bad');
     const code = $('code-box').value;
     if (!code.trim()) return toast('Paste a build code into the box first.', 'bad');
-    if (!confirm('Replace everything on your plot with this build?')) return;
-    const r = importCode(code);
+    if (!(await confirmDialog('Replace your build?', 'Everything on your plot will be replaced with this build.', 'Replace it'))) return;
+    const r = build.importCode(code);
     if (!r) return toast("That doesn't look like a valid Naijacraft build code.", 'bad');
     toast(typeof r === 'string' ? `Loaded "${r}" onto your plot!` : 'Build loaded onto your plot!');
   });
-  $('reset-plot').addEventListener('click', () => {
-    if (!confirm('Clear everything you built on your plot? (You can undo this with Ctrl+Z.)')) return;
-    const edits = [];
-    for (let y = 1; y < HEIGHT; y++) for (let z = myPlot.z; z < myPlot.z + PLOT; z++) for (let x = myPlot.x; x < myPlot.x + PLOT; x++) if (world.get(x, y, z)) edits.push([x, y, z, B.AIR, 0]);
-    applyEdits(edits);
+  $('reset-plot').addEventListener('click', async () => {
+    if (!G.myPlot) return toast('Claim a plot first.', 'bad');
+    if (!(await confirmDialog('Clear your plot?', 'Everything you built on your plot will be removed. You can undo this with Ctrl+Z.', 'Clear it', 'Cancel', true))) return;
+    const plot = G.myPlot, edits = [];
+    for (let y = 1; y < HEIGHT; y++) for (let z = plot.z; z < plot.z + PLOT; z++) for (let x = plot.x; x < plot.x + PLOT; x++) if (world.get(x, y, z)) edits.push([x, y, z, B.AIR, 0]);
+    build.applyEdits(edits);
     toast('Your plot is clear again.');
+  });
+  $('release-plot').addEventListener('click', async () => {
+    if (!G.online || !G.myPlot) return toast("You don't have a plot to give up.");
+    if (!(await confirmDialog('Give up this plot?', `Plot ${G.myPlot.number} and everything on it will be erased and become free land for someone else. This cannot be undone.`, 'Give it up', 'Keep it', true))) return;
+    G.online.release();
   });
 
   // settings
-  const view = $('set-view'), res = $('set-res'), sens = $('set-sens'), vol = $('set-vol'), time = $('set-time'), freeze = $('set-freeze'), weather = $('set-weather');
+  const view = $('set-view'), res = $('set-res'), sens = $('set-sens'), vol = $('set-vol'), time = $('set-time'), freeze = $('set-freeze'), weather = $('set-weather'), quality = $('set-quality');
   const save = () => storage.saveSettings(settings);
+  quality.addEventListener('change', () => { settings.quality = quality.value; applyQuality(); syncSettingsUI(); save(); });
   view.addEventListener('input', () => { settings.viewChunks = Number(view.value); $('set-view-val').textContent = settings.viewChunks * CHUNK + ' blocks'; applyViewDistance(); save(); });
   res.addEventListener('change', () => { settings.resolution = Number(res.value); applyResolution(); save(); });
   sens.addEventListener('input', () => { settings.sensitivity = Number(sens.value); save(); });
@@ -966,42 +1248,50 @@ function bindUI() {
   freeze.addEventListener('change', () => { settings.freezeTime = freeze.checked; save(); });
   weather.addEventListener('change', () => { settings.weather = weather.value; state.weatherTimer = 0; save(); });
 
-  // map
-  const warps = [['My plot', myPlot.x + PLOT / 2, myPlot.z + PLOT + 2], ['Plaza', PLAZA + 7.5, PLAZA + 9], ['Yaba Market', 104, 82], ['Freedom Park', 64, 125], ['Bar Beach', 84, CITY + 8]];
-  for (const [label, x, z] of warps) {
+  // map: teleport buttons and clicking the map
+  const warp = (label, fn) => {
     const b = document.createElement('button');
+    b.className = 'btn';
     b.textContent = label;
-    b.addEventListener('click', () => { teleport(x, z); resumePlay(); });
+    b.addEventListener('click', () => { fn(); resumePlay(); });
     $('warp-buttons').appendChild(b);
-  }
+  };
+  warp('My plot', () => { if (G.myPlot) teleportToPlot(G.myPlot); else teleport(PLAZA + 4, PLAZA + 10); });
+  warp('Plaza', () => teleport(PLAZA + 4, PLAZA + 10));
+  warp('Computer Village', () => teleportToPlot(plotByNumber(9)));
+  warp('Freedom Park', () => teleportToPlot(plotByNumber(33)));
+  warp('Eko Atlantic', () => teleportToPlot(plotByNumber(62)));
+  warp('Bar Beach', () => teleport(SX / 2, CITY + 8));
   $('bigmap').addEventListener('click', (e) => {
     const r = e.target.getBoundingClientRect();
-    const x = (e.clientX - r.left) / r.width * SX, z = (e.clientY - r.top) / r.width * SX;
-    if (z > SZ) return;
+    const x = mapX((e.clientX - r.left) / r.width * SX), z = (e.clientY - r.top) / r.height * SZ;     // maps draw x mirrored
+    if (z > SZ - 1) return;
     teleport(x, z);
     resumePlay();
   });
 
   document.addEventListener('pointerlockchange', () => {
-    if (document.pointerLockElement === canvas) { if (state.started && state.mode !== 'playing') showMode('playing'); }
+    if (document.pointerLockElement === canvas) { if (state.started && state.mode !== 'playing' && state.mode !== 'chat') showMode('playing'); }
     else if (state.started && state.mode === 'playing') { showMode('paused'); saveAll(); }
   });
   document.addEventListener('pointerlockerror', () => { if (state.started && state.mode === 'playing') showMode('paused'); });
 
   document.addEventListener('mousemove', (e) => {
-    if (state.mode !== 'playing' || document.pointerLockElement !== canvas) return;
+    if ((state.mode !== 'playing' && state.mode !== 'chat') || document.pointerLockElement !== canvas) return;
     const s = 0.0022 * settings.sensitivity;
     player.yaw += e.movementX * s;
     player.pitch = Math.max(-1.55, Math.min(1.55, player.pitch + e.movementY * s));
   });
   canvas.addEventListener('mousedown', (e) => {
     sfx.unlock();
-    if (isTouch || state.mode !== 'playing') return; // touch has its own buttons; ignore synthetic clicks
-    if (!isTouch && document.pointerLockElement !== canvas) { requestLock(); return; }
+    if (isTouch) return;                                      // touch has its own buttons; ignore synthetic clicks
+    if (state.mode === 'chat') { chat.close(); return; }
+    if (state.mode !== 'playing') return;
+    if (document.pointerLockElement !== canvas) { requestLock(); return; }
     e.preventDefault();
-    if (e.button === 0) { mouse.left = true; mouse.next = performance.now() + 250; if (state.paste) { state.paste = null; updateModeBar(); } else tryBreak(); }
-    else if (e.button === 2) { mouse.right = true; mouse.next = performance.now() + 250; tryPlace(); }
-    else if (e.button === 1) pickBlock();
+    if (e.button === 0) { mouse.left = true; mouse.next = performance.now() + 250; if (state.paste) { state.paste = null; build.updateModeBar(); } else build.tryBreak(); }
+    else if (e.button === 2) { mouse.right = true; mouse.next = performance.now() + 250; build.tryPlace(); }
+    else if (e.button === 1) build.pickBlock();
   });
   window.addEventListener('mouseup', (e) => { if (e.button === 0) mouse.left = false; if (e.button === 2) mouse.right = false; });
   canvas.addEventListener('contextmenu', (e) => e.preventDefault());
@@ -1009,6 +1299,7 @@ function bindUI() {
 
   window.addEventListener('keydown', (e) => {
     const code = e.code;
+    if (isTextTarget(e.target) || dialogOpen()) return;
     if (state.mode === 'playing') {
       if (code === 'Space' && !e.repeat) {
         const now = performance.now();
@@ -1018,29 +1309,34 @@ function bindUI() {
       keys[code] = true;
       if (/^Digit[1-9]$/.test(code)) selectSlot(Number(code.slice(5)) - 1);
       if (['Space', 'ArrowUp', 'ArrowDown', 'Tab'].includes(code)) e.preventDefault();
-      if ((e.ctrlKey || e.metaKey) && code === 'KeyZ') { e.preventDefault(); if (e.shiftKey) redo(); else undo(); return; }
-      if ((e.ctrlKey || e.metaKey) && code === 'KeyY') { e.preventDefault(); redo(); return; }
+      if ((e.ctrlKey || e.metaKey) && code === 'KeyZ') { e.preventDefault(); if (e.shiftKey) build.redo(); else build.undo(); return; }
+      if ((e.ctrlKey || e.metaKey) && code === 'KeyY') { e.preventDefault(); build.redo(); return; }
       if (e.ctrlKey || e.metaKey || e.repeat) return;
       switch (code) {
         case 'KeyE': openOverlay('inventory'); hud.openTab(); break;
         case 'KeyM': openOverlay('map'); break;
         case 'KeyH': openOverlay('help'); break;
-        case 'KeyF': areaKey(); break;
-        case 'KeyG': fillArea(false); break;
-        case 'KeyX': case 'Delete': fillArea(true); break;
-        case 'KeyC': copyArea(); break;
-        case 'KeyV': if (state.clipboard) { startPaste(state.clipboard, 'your copy'); } else toast('Nothing copied yet. Select an area (F, F) and press C.'); break;
+        case 'KeyF': build.areaKey(); break;
+        case 'KeyG': build.fillArea(false); break;
+        case 'KeyX': case 'Delete': build.fillArea(true); break;
+        case 'KeyC': build.copyArea(); break;
+        case 'KeyV': if (state.clipboard) { build.startPaste(state.clipboard, 'your copy'); } else toast('Nothing copied yet. Select an area (F, F) and press C.'); break;
         case 'KeyR': if (state.paste) { state.paste.rot = (state.paste.rot + 1) % 4; sfx.click(); } break;
         case 'KeyT': state.camMode = (state.camMode + 1) % 3; avatar.setVisible(state.camMode !== 0); break;
         case 'KeyP': takePhoto(); break;
-        case 'Backspace': state.paste = null; state.area = null; updateModeBar(); break;
+        case 'KeyB': openEmotes(); break;
+        case 'Tab': openPlayers(); break;
+        case 'Enter': case 'Slash': e.preventDefault(); openChat(); if (code === 'Slash' && chat.isOpen) setTimeout(() => { $('chat-input').value = '/'; }, 10); break;
+        case 'Backspace': state.paste = null; state.area = null; build.updateModeBar(); break;
         default: break;
       }
       return;
     }
     if (e.repeat) return;
-    const closeKeys = { inventory: 'KeyE', map: 'KeyM', help: 'KeyH' };
-    if (closeKeys[state.mode] === code) { resumePlay(); return; }
+    if (state.mode === 'emote' && /^Digit[1-6]$/.test(code)) { playEmote(Number(code.slice(5))); resumePlay(); return; }
+    const closeKeys = { inventory: 'KeyE', map: 'KeyM', help: 'KeyH', players: 'Tab', emote: 'KeyB' };
+    if (closeKeys[state.mode] === code) { e.preventDefault(); resumePlay(); return; }
+    if (code === 'Escape' && (state.mode === 'players' || state.mode === 'emote')) { resumePlay(); return; }
     if (code === 'Escape' && closeKeys[state.mode]) showMode('paused');
   });
   window.addEventListener('keyup', (e) => { keys[e.code] = false; });
@@ -1057,12 +1353,14 @@ function bindUI() {
       },
       press(act) {
         sfx.unlock();
-        if (act === 'break') { mouse.next = performance.now() + 300; if (state.paste) { state.paste = null; updateModeBar(); } else tryBreak(); }
-        if (act === 'place') { mouse.next = performance.now() + 300; tryPlace(); }
+        if (act === 'break') { mouse.next = performance.now() + 300; if (state.paste) { state.paste = null; build.updateModeBar(); } else build.tryBreak(); }
+        if (act === 'place') { mouse.next = performance.now() + 300; build.tryPlace(); }
         if (act === 'fly') { player.toggleFly(); toast(player.flying ? 'Flying on' : 'Flying off'); }
         if (act === 'view') { state.camMode = (state.camMode + 1) % 3; avatar.setVisible(state.camMode !== 0); }
         if (act === 'inventory') { showMode('inventory'); hud.openTab(); }
         if (act === 'map') showMode('map');
+        if (act === 'chat') { if (G.online) openChat(); else toast('Chat works when you play online.'); }
+        if (act === 'emote') openEmotes();
         if (act === 'pause') showMode('paused');
       },
     });
@@ -1088,3 +1386,4 @@ function takePhoto() {
 
 boot().catch((e) => { console.error(e); fatal('Something went wrong while starting: ' + e.message); });
 
+void MAX_BLOCK_ID;

@@ -214,7 +214,7 @@ export function generateCity(world) {
   }
   for (const p of PLOTS) {                                               // and one mid-block on the front and east side of every plot
     lampPost(p.x + PLOT / 2, p.z + PLOT, 4);
-    if (p.col < GRID - 1) lampPost(p.x + PLOT, p.z + PLOT / 2, 4);
+    if (p.x + PLOT < SX - ROAD) lampPost(p.x + PLOT, p.z + PLOT / 2, 4);
   }
 
   // ---------------------------------------------------------------- central plaza and monument

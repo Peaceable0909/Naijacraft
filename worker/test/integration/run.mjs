@@ -1,7 +1,7 @@
 // End-to-end test against the real Workers runtime (workerd via `wrangler dev`).
 //   node test/integration/run.mjs            quick run (about 40 s)
 //   node test/integration/run.mjs --long     also proves the Durable Object survives hibernation (about 2 min)
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -22,6 +22,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 let wrangler = null, logs = '';
 async function startWrangler(persist) {
+  spawnSync('node', ['scripts/build-client.mjs'], { cwd: root, stdio: 'ignore' });   // the Worker serves the game from ./public
   wrangler = spawn('npx', ['wrangler', 'dev', '--local', '--ip', '127.0.0.1', '--port', String(PORT), '--persist-to', persist,
     '--var', `ADMIN_TOKEN:${ADMIN}`, '--var', 'AUTH_PEPPER:integration-pepper', '--var', 'ALLOWED_ORIGINS:*'], {
     cwd: root, detached: true, env: { ...process.env, WRANGLER_SEND_METRICS: 'false', CI: '1', NO_COLOR: '1' },

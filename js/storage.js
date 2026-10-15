@@ -1,4 +1,5 @@
-// Local persistence (Phase 1). Phase 2 swaps this for cloud saves keyed by the signed-in account.
+// Local persistence: settings and the cosmetic profile always live in this browser. Plots are only stored here in offline
+// mode; online, the server keeps them.
 const NS = 'naijacraft:v1:';
 
 function read(key, fallback) {
@@ -12,7 +13,7 @@ function remove(key) { try { localStorage.removeItem(NS + key); } catch { /* ign
 export const storage = {
   loadProfile: () => read('profile', null),
   saveProfile: (p) => write('profile', p),
-  loadSettings: () => ({ viewChunks: 10, resolution: 1, sensitivity: 1, volume: 0.7, freezeTime: false, weather: 'auto', ...read('settings', {}) }),
+  loadSettings: () => ({ viewChunks: 10, resolution: 1, sensitivity: 1, volume: 0.7, freezeTime: false, weather: 'auto', quality: 'auto', ...read('settings', {}) }),
   saveSettings: (s) => write('settings', s),
   // Plot saves: { v: 2, d: base64 }. Prototype saves were a bare base64 string under 'plot:<n>'.
   loadPlot(number) {
@@ -28,4 +29,10 @@ export const storage = {
     return ok;
   },
   clearPlot(number) { remove('plot2:' + number); remove('plot:' + number); },
+  // The offline plot is number 28. Saves from the Phase 1 prototype lived under plot 6, so adopt those once.
+  loadOfflinePlot(number, legacyNumber = 6) {
+    return this.loadPlot(number) || this.loadPlot(legacyNumber);
+  },
+  loadMutes: () => { const m = read('mutes', []); return Array.isArray(m) ? m.filter((x) => typeof x === 'string').slice(0, 200) : []; },
+  saveMutes: (list) => write('mutes', list.slice(0, 200)),
 };

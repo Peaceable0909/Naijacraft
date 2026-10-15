@@ -4,6 +4,11 @@ name = "naijacraft-world"
 main = "src/index.js"
 compatibility_date = "2026-06-01"
 
+# The game itself (index.html, js, css) is copied into ./public by `npm run build:client` and served from the same
+# address as the API, so there is nothing else to host. Static files are free and unlimited.
+[assets]
+directory = "./public"
+
 [[durable_objects.bindings]]
 name = "WORLD"
 class_name = "World"

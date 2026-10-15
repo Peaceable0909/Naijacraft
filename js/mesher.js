@@ -1,7 +1,7 @@
 // Turns a 16x16 column of the world into vertex data.
 // Per vertex colour: r = face shade x ambient occlusion, g = sunlight, b = lamp light,
 // a = material flag (1 normal, 0.5 water, 0 self-lit).
-import { B, BLOCKS, OPAQUE, tileRect, shapeBoxes, T } from './blocks.js';
+import { B, BLOCKS, OPAQUE, CONNECTING, tileRect, shapeBoxes, T } from './blocks.js';
 import { SX, SZ, HEIGHT, CHUNK, NCX } from './world.js';
 
 // Vertices are listed counter-clockwise seen from outside; Babylon is left-handed, so triangles are
@@ -138,11 +138,13 @@ export function buildChunk(world, cx, cz) {
             quad(out.opaque, verts, QUAD_UV, rect(b.side), cols, false, true);
           }
         } else {
-          // slabs, stairs, doors: a few boxes, lit by the light inside their own cell
+          // slabs, stairs, doors, fences, panes, posts, lanterns, carpets: a few boxes, lit by the light inside their own cell
           const m = meta[ci];
           const ls = sky[ci] / 15, lb = blk[ci] / 15;
           const doorTile = b.render === 'door' ? (m & 8 ? T.door_top : T.door_bottom) : -1;
-          for (const bx of shapeBoxes(id, m)) {
+          const L = b.transparent ? out.glass : out.opaque;
+          const glow = b.light > 0;
+          for (const bx of shapeBoxes(id, m, CONNECTING[id] ? world.connMask(x, y, z, id) : 0)) {
             for (let fi = 0; fi < 6; fi++) {
               const f = FACES[fi];
               const onEdge = f.dir > 0 ? bx[f.axis + 3] === 1 : bx[f.axis] === 0;
@@ -154,9 +156,10 @@ export function buildChunk(world, cx, cz) {
                 verts[i][0] = x + lx; verts[i][1] = y + ly; verts[i][2] = z + lz;
                 const uv = FACE_UV[fi](lx, ly, lz);
                 uvs[i][0] = uv[0]; uvs[i][1] = uv[1];
-                const c = cols[i]; c[0] = f.shade; c[1] = ls; c[2] = lb; c[3] = 1;
+                const c = cols[i];
+                if (glow) { c[0] = 1; c[1] = 1; c[2] = 1; c[3] = 0; } else { c[0] = f.shade; c[1] = ls; c[2] = lb; c[3] = 1; }
               }
-              quad(out.opaque, verts, uvs, r, cols);
+              quad(L, verts, uvs, r, cols);
             }
           }
         }

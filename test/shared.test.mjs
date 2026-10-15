@@ -195,3 +195,21 @@ test('kdf: the password policy', () => {
   assert.ok(passwordProblem('aaaaaaaaaa'));
   assert.equal(passwordProblem('a-sensible-passphrase'), null);
 });
+
+test('layout: maps mirror x so plot 1 is the top-left of every map', () => {
+  const p1 = L.PLOTS[0], p8 = L.PLOTS[7], p57 = L.PLOTS[56];
+  assert.equal(p1.col, 0); assert.equal(p1.row, 0);
+  assert.ok(p1.x > p8.x, 'plot 1 sits at the high-x (map-left) side');
+  assert.equal(L.mapX(p1.x + L.PLOT) < L.mapX(p8.x + L.PLOT), true, 'and so appears left of plot 8 on a map');
+  assert.ok(p57.x === p1.x && p57.z > p1.z, 'plot 57 is directly south of plot 1');
+  // every block column of every plot maps back to that plot
+  for (const p of L.PLOTS) {
+    assert.equal(L.plotAt(p.x, p.z), p); assert.equal(L.plotAt(p.x + L.PLOT - 1, p.z + L.PLOT - 1), p);
+    assert.equal(L.plotAt(p.x + L.PLOT, p.z), null, 'the road east/west of a plot is not part of it');
+  }
+  // the names read Ikeja, Yaba, Surulere, Apapa from the map's left to its right
+  const names = [0, 2, 4, 6].map((col) => L.PLOTS[col].district);
+  assert.deepEqual(names, ['Ikeja', 'Yaba', 'Surulere', 'Apapa']);
+  assert.equal(L.districtAt(L.PLOTS[0].x + 5, L.PLOTS[0].z + 5), 'Ikeja');
+  assert.equal(L.districtAt(L.PLOTS[7].x + 5, L.PLOTS[7].z + 5), 'Apapa');
+});

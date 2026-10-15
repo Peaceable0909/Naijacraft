@@ -5,8 +5,9 @@
   "type": "module",
   "description": "Naijacraft multiplayer backend: accounts + world server on Cloudflare Workers and Durable Objects",
   "scripts": {
-    "dev": "wrangler dev --port 8787",
-    "deploy": "wrangler deploy",
+    "build:client": "node scripts/build-client.mjs",
+    "dev": "npm run build:client && wrangler dev --port 8787",
+    "deploy": "npm run build:client && wrangler deploy",
     "test": "node --test \"test/unit/*.test.mjs\"",
     "test:integration": "node test/integration/run.mjs",
     "test:integration:long": "node test/integration/run.mjs --long"

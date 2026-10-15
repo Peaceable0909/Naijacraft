@@ -18,6 +18,11 @@ export const PLOT_CELLS = PLOT * PLOT * PLOT_ROWS;   // 64,512
 export const MAX_BLOCK_ID = 67;
 export const NON_PLACEABLE = [10, 12, 13, 23];
 
+// Orientation. The 3D view is left-handed (as in Babylon.js): looking north (-z), +x is on your LEFT. So that the maps
+// match what you see, plots are numbered from the north-west corner at the HIGH-x side, and every 2D map draws
+// x mirrored (see mapX). Plot 1 is the top-left of every map, and numbers read like a page, left to right.
+export const mapX = (x) => SX - x;
+
 export const DISTRICT_NAMES = [
   ['Ikeja', 'Yaba', 'Surulere', 'Apapa'],
   ['Lagos Island', 'Ikoyi', 'Victoria Island', 'Lekki'],
@@ -26,12 +31,13 @@ export const DISTRICT_NAMES = [
 // Districts are 2 plot columns wide and 4 plot rows tall; the beach is its own place.
 export function districtAt(x, z) {
   if (z >= CITY) return 'Bar Beach';
-  const col = Math.max(0, Math.min(3, Math.floor(x / (CITY / 4))));
+  const col = 3 - Math.max(0, Math.min(3, Math.floor(x / (CITY / 4))));
   return DISTRICT_NAMES[z < CITY / 2 ? 0 : 1][col];
 }
 
+// Column 0 is the left-most column on the map, which is the high-x side of the world.
 export function plotOrigin(col, row) {
-  return { x: ROAD + col * PITCH, z: ROAD + row * PITCH };
+  return { x: ROAD + (GRID - 1 - col) * PITCH, z: ROAD + row * PITCH };
 }
 
 // Plots that are not free land: landmarks and show homes, keyed by plot number.
@@ -83,10 +89,10 @@ export function plotAt(x, z) {
   x = Math.floor(x); z = Math.floor(z);
   const lx = x - ROAD, lz = z - ROAD;
   if (lx < 0 || lz < 0) return null;
-  const col = Math.floor(lx / PITCH), row = Math.floor(lz / PITCH);
-  if (col >= GRID || row >= GRID) return null;
-  if (lx - col * PITCH >= PLOT || lz - row * PITCH >= PLOT) return null;
-  return PLOTS[row * GRID + col];
+  const xc = Math.floor(lx / PITCH), row = Math.floor(lz / PITCH);
+  if (xc >= GRID || row >= GRID) return null;
+  if (lx - xc * PITCH >= PLOT || lz - row * PITCH >= PLOT) return null;
+  return PLOTS[row * GRID + (GRID - 1 - xc)];
 }
 
 // Free plots ordered by distance from the central plaza: the first one is the "best" land left.
@@ -96,9 +102,9 @@ export function claimOrder() {
   return PLOTS.filter((p) => p.claimable).sort((a, b) => dist(a) - dist(b) || a.number - b.number);
 }
 
-// Where to stand to look at a plot's front door: the pavement just south of its centre.
+// Where to stand to look at a plot's front: the pavement just south of its centre (two blocks east of the mid-block lamp post).
 export function plotFront(plot) {
-  return { x: plot.x + PLOT / 2 + 0.5, y: 1, z: plot.z + PLOT + 0.5, yaw: Math.PI };
+  return { x: plot.x + PLOT / 2 + 2.5, y: 1, z: plot.z + PLOT + 0.5, yaw: Math.PI };
 }
 
 export const SPAWN = { x: CITY / 2, y: 1, z: CITY / 2 + 11, yaw: Math.PI, pitch: 0.12 };
