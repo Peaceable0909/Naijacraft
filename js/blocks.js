@@ -10,6 +10,7 @@ export const TILE_NAMES = [
   'adire', 'flag', 'tiles', 'marble', 'bookshelf', 'generator', 'generator_top', 'solar_top',
   'solar_side', 'black', 'pink', 'purple', 'beige', 'neon_pink', 'neon_cyan', 'tall_grass',
   'hibiscus', 'yellow_flower', 'fern', 'door_bottom', 'door_top', 'palm_leaves', 'tank_side', 'tank_top',
+  'iron', 'lantern',
 ];
 export const ATLAS_COLS = 8;
 export const ATLAS_ROWS = Math.ceil(TILE_NAMES.length / ATLAS_COLS);
@@ -26,10 +27,11 @@ export const B = {
   BEIGE: 41, NEON_PINK: 42, NEON_CYAN: 43, TALL_GRASS: 44, HIBISCUS: 45, YELLOW_FLOWER: 46,
   FERN: 47, PLANK_SLAB: 48, CONCRETE_SLAB: 49, BRICK_SLAB: 50, PLANK_STAIRS: 51,
   CONCRETE_STAIRS: 52, BRICK_STAIRS: 53, DOOR: 54, PALM_LEAVES: 55, TANK: 56,
-  ZINC_SLAB: 57, ZINC_STAIRS: 58,
+  ZINC_SLAB: 57, ZINC_STAIRS: 58, IRON_FENCE: 59, WOOD_FENCE: 60, LAMP_POST: 61, LANTERN: 62, GLASS_PANE: 63,
+  RED_CARPET: 64, BLUE_CARPET: 65, GREEN_CARPET: 66, ANKARA_CARPET: 67,
 };
 
-// render: cube | water | cross (plants) | slab | stairs | door
+// render: cube | water | cross (plants) | slab | stairs | door | fence | pane | post | lantern | carpet
 // opaque: hides neighbouring faces and blocks light. solid: the player collides with it.
 export const BLOCKS = [];
 function def(id, name, tiles, opts = {}) {
@@ -104,6 +106,15 @@ def(B.PALM_LEAVES, 'Palm Fronds', 'palm_leaves', { sound: 'soft' });
 def(B.TANK, 'Water Tank', ['tank_top', 'tank_side', 'tank_top'], { sound: 'metal' });
 def(B.ZINC_SLAB, 'Zinc Slab', 'zinc', { render: 'slab', sound: 'metal' });
 def(B.ZINC_STAIRS, 'Zinc Stairs', 'zinc', { render: 'stairs', sound: 'metal' });
+def(B.IRON_FENCE, 'Iron Fence', 'iron', { render: 'fence', sound: 'metal' });
+def(B.WOOD_FENCE, 'Wood Fence', 'planks', { render: 'fence', sound: 'wood' });
+def(B.LAMP_POST, 'Lamp Post', 'iron', { render: 'post', sound: 'metal' });
+def(B.LANTERN, 'Lantern', 'lantern', { render: 'lantern', light: 15, solid: false, sound: 'glass' });
+def(B.GLASS_PANE, 'Glass Pane', 'glass', { render: 'pane', transparent: true, sound: 'glass' });
+def(B.RED_CARPET, 'Red Carpet', 'red', { render: 'carpet', sound: 'soft' });
+def(B.BLUE_CARPET, 'Blue Carpet', 'blue', { render: 'carpet', sound: 'soft' });
+def(B.GREEN_CARPET, 'Green Carpet', 'green', { render: 'carpet', sound: 'soft' });
+def(B.ANKARA_CARPET, 'Ankara Carpet', 'ankara_orange', { render: 'carpet', sound: 'soft' });
 
 export const OPAQUE = BLOCKS.map((b) => b.opaque);
 export const SOLID = BLOCKS.map((b) => b.solid);
@@ -114,8 +125,8 @@ export const CATEGORIES = [
   { name: 'Building', blocks: [B.CONCRETE, B.BRICK, B.PLANKS, B.GLASS, B.ROOF, B.ZINC, B.THATCH, B.MUD_BRICK, B.STONE, B.MARBLE, B.TILES, B.PAVEMENT, B.LOG, B.TANK, B.SAND, B.DIRT] },
   { name: 'Colours & Fabrics', blocks: [B.WHITE, B.BLACK, B.RED, B.ORANGE, B.YELLOW, B.GREEN, B.BLUE, B.PURPLE, B.PINK, B.BEIGE, B.ANKARA_ORANGE, B.ANKARA_GREEN, B.ANKARA_RED, B.ADIRE, B.FLAG] },
   { name: 'Nature', blocks: [B.GRASS, B.LEAVES, B.PALM_LEAVES, B.LOG, B.TALL_GRASS, B.HIBISCUS, B.YELLOW_FLOWER, B.FERN, B.WATER, B.SAND, B.DIRT] },
-  { name: 'Lights & Deco', blocks: [B.LAMP, B.NEON_PINK, B.NEON_CYAN, B.BOOKSHELF, B.GENERATOR, B.SOLAR, B.TANK, B.DOOR] },
-  { name: 'Shapes', blocks: [B.PLANK_SLAB, B.CONCRETE_SLAB, B.BRICK_SLAB, B.ZINC_SLAB, B.PLANK_STAIRS, B.CONCRETE_STAIRS, B.BRICK_STAIRS, B.ZINC_STAIRS, B.DOOR] },
+  { name: 'Lights & Deco', blocks: [B.LAMP, B.LANTERN, B.LAMP_POST, B.NEON_PINK, B.NEON_CYAN, B.BOOKSHELF, B.GENERATOR, B.SOLAR, B.TANK, B.DOOR] },
+  { name: 'Shapes', blocks: [B.PLANK_SLAB, B.CONCRETE_SLAB, B.BRICK_SLAB, B.ZINC_SLAB, B.PLANK_STAIRS, B.CONCRETE_STAIRS, B.BRICK_STAIRS, B.ZINC_STAIRS, B.DOOR, B.WOOD_FENCE, B.IRON_FENCE, B.GLASS_PANE, B.RED_CARPET, B.BLUE_CARPET, B.GREEN_CARPET, B.ANKARA_CARPET] },
 ];
 export const FABRICS = [B.ANKARA_ORANGE, B.ANKARA_GREEN, B.ANKARA_RED, B.ADIRE];
 export const DEFAULT_HOTBAR = [B.CONCRETE, B.BRICK, B.PLANKS, B.GLASS, B.ZINC, B.DOOR, B.LAMP, B.ANKARA_ORANGE, B.HIBISCUS];
@@ -128,15 +139,56 @@ const DOOR_T = 0.1875;
 const STAIR_TOP = [[0, 0.5, 0, 1, 1, 0.5], [0.5, 0.5, 0, 1, 1, 1], [0, 0.5, 0.5, 1, 1, 1], [0, 0.5, 0, 0.5, 1, 1]];
 const DOOR_CLOSED = [[0, 0, 0, 1, 1, DOOR_T], [1 - DOOR_T, 0, 0, 1, 1, 1], [0, 0, 1 - DOOR_T, 1, 1, 1], [0, 0, 0, DOOR_T, 1, 1]];
 const DOOR_OPEN = [[0, 0, 0, DOOR_T, 1, 1], [0, 0, 0, 1, 1, DOOR_T], [1 - DOOR_T, 0, 0, 1, 1, 1], [0, 0, 1 - DOOR_T, 1, 1, 1]];
+const P0 = 0.375, P1 = 0.625;     // posts are a quarter of a block thick
+const RAILS = [[0.375, 0.5625], [0.75, 0.9375]];
+const POST = [[P0, 0, P0, P1, 1, P1]];
+const LANTERN = [[0.3125, 0, 0.3125, 0.6875, 0.5625, 0.6875], [0.375, 0.5625, 0.375, 0.625, 0.6875, 0.625]];
+const CARPET = [[0, 0, 0, 1, 0.0625, 1]];
+
+// Neighbour mask for fences and panes: bit 1 north (-z), 2 east (+x), 4 south (+z), 8 west (-x).
+function fenceBoxes(nb) {
+  const out = [[P0, 0, P0, P1, 1, P1]];
+  for (const [a, b] of RAILS) {
+    if (nb & 1) out.push([0.4375, a, 0, 0.5625, b, P0]);
+    if (nb & 2) out.push([P1, a, 0.4375, 1, b, 0.5625]);
+    if (nb & 4) out.push([0.4375, a, P1, 0.5625, b, 1]);
+    if (nb & 8) out.push([0, a, 0.4375, P0, b, 0.5625]);
+  }
+  return out;
+}
+function paneBoxes(nb) {
+  const out = [[0.4375, 0, 0.4375, 0.5625, 1, 0.5625]];
+  if (nb & 1) out.push([0.4375, 0, 0, 0.5625, 1, 0.4375]);
+  if (nb & 2) out.push([0.5625, 0, 0.4375, 1, 1, 0.5625]);
+  if (nb & 4) out.push([0.4375, 0, 0.5625, 0.5625, 1, 1]);
+  if (nb & 8) out.push([0, 0, 0.4375, 0.4375, 1, 0.5625]);
+  return out;
+}
 
 // Meta bits - slab: 1 = top half. stairs: 0-1 facing. door: 0-1 facing, 4 = open, 8 = upper half.
-export function shapeBoxes(id, meta) {
+// `nb` only matters for fences and panes.
+export function shapeBoxes(id, meta, nb = 0) {
   switch (BLOCKS[id].render) {
     case 'slab': return meta & 1 ? [[0, 0.5, 0, 1, 1, 1]] : [[0, 0, 0, 1, 0.5, 1]];
     case 'stairs': return [[0, 0, 0, 1, 0.5, 1], STAIR_TOP[meta & 3]];
     case 'door': return [(meta & 4 ? DOOR_OPEN : DOOR_CLOSED)[meta & 3]];
+    case 'fence': return fenceBoxes(nb);
+    case 'pane': return paneBoxes(nb);
+    case 'post': return POST;
+    case 'lantern': return LANTERN;
+    case 'carpet': return CARPET;
     default: return FULL;
   }
+}
+
+// Shapes whose geometry depends on their neighbours, and what they connect to.
+export const CONNECTING = BLOCKS.map((b) => b.render === 'fence' || b.render === 'pane');
+export function connects(id, nid) {
+  const kind = BLOCKS[id].render, n = BLOCKS[nid];
+  if (nid === 0) return false;
+  if (kind === 'fence') return n.render === 'fence' || (n.render === 'cube' && n.opaque) || n.render === 'door';
+  if (kind === 'pane') return n.render === 'pane' || nid === B.GLASS || (n.render === 'cube' && n.opaque);
+  return false;
 }
 
 // ---------------------------------------------------------------- texture atlas
@@ -427,6 +479,15 @@ const PAINT = {
   tank_side: pixels((x, y) => {
     if (y === 4 || y === 11) return [64, 64, 68];
     return x % 4 === 0 ? [54, 54, 58] : [28, 28, 31];
+  }),
+  iron: pixels((x, y, r) => {
+    const n = jit(r, 5);
+    if (x === 0 || x === 15) return [66, 68, 76];
+    return y % 8 === 0 ? [28, 29, 34] : [44 + n, 46 + n, 52 + n];
+  }),
+  lantern: pixels((x, y) => {
+    if (x === 0 || y === 0 || x === 15 || y === 15 || x === 7 || x === 8) return [60, 52, 40];
+    return y < 5 || y > 10 ? [255, 222, 120] : [255, 246, 190];
   }),
   tank_top: pixels((x, y) => {
     const d = Math.hypot(x - 7.5, y - 7.5);

@@ -1,63 +1,21 @@
-// World data: a flat, finite Lagos made of a GRID x GRID set of plots separated by roads,
-// with Bar Beach along the southern edge. Also owns lighting (sun + lamps) and plot persistence.
-import { B, BLOCKS, OPAQUE, SOLID, EMIT, shapeBoxes } from './blocks.js';
+// World data: the flat, finite Lagos (8 x 8 plots separated by roads, Bar Beach to the south), its lighting
+// (sun + lamps) and plot persistence. The layout itself lives in shared/layout.js so the server agrees with it.
+import { B, BLOCKS, OPAQUE, SOLID, EMIT, CONNECTING, shapeBoxes, connects } from './blocks.js';
+import {
+  PLOT, ROAD, GRID, PITCH, CITY, BEACH, SX, SZ, HEIGHT, PLOT_ROWS, PLOT_CELLS, PLOTS, OFFLINE_PLOT, SPAWN,
+  plotAt, plotOrigin, plotByNumber, districtAt, DISTRICT_NAMES, cellIndex, claimOrder, plotFront,
+} from '../shared/layout.js';
 
-export const PLOT = 32;              // plot edge length in blocks
-export const ROAD = 8;               // road width
-export const GRID = 4;               // plots per side
-export const PITCH = PLOT + ROAD;
-export const CITY = ROAD + GRID * PITCH;   // 168: the walled city
-export const BEACH = 24;                   // sand strip south of the city
-export const SX = CITY;
-export const SZ = CITY + BEACH;            // 192
-export const HEIGHT = 64;
+export {
+  PLOT, ROAD, GRID, PITCH, CITY, BEACH, SX, SZ, HEIGHT, PLOT_ROWS, PLOT_CELLS, PLOTS, OFFLINE_PLOT, SPAWN,
+  plotAt, plotOrigin, plotByNumber, districtAt, DISTRICT_NAMES, cellIndex, claimOrder, plotFront,
+};
 export const CHUNK = 16;
 export const NCX = Math.ceil(SX / CHUNK);
 export const NCZ = Math.ceil(SZ / CHUNK);
 const LAYER = SX * SZ;
 
-// [row half][col half]; z grows southwards.
-const DISTRICTS = [['Ikeja', 'Yaba'], ['Lagos Island', 'Lekki']];
-export function districtAt(x, z) {
-  if (z >= CITY) return 'Bar Beach';
-  return DISTRICTS[z < CITY / 2 ? 0 : 1][x < CITY / 2 ? 0 : 1];
-}
-
-export function plotOrigin(col, row) {
-  return { x: ROAD + col * PITCH, z: ROAD + row * PITCH };
-}
-
-// Which plot (if any) contains the block column (x, z)?
-export function plotAt(x, z) {
-  x = Math.floor(x); z = Math.floor(z);
-  const lx = x - ROAD, lz = z - ROAD;
-  if (lx < 0 || lz < 0) return null;
-  const col = Math.floor(lx / PITCH), row = Math.floor(lz / PITCH);
-  if (col >= GRID || row >= GRID) return null;
-  if (lx - col * PITCH >= PLOT || lz - row * PITCH >= PLOT) return null;
-  return PLOTS[row * GRID + col];
-}
-
-// kind: 'house' | 'shop' | 'tower' | 'market' | 'park' | 'free'
-function mk(number, kind, owner, name) {
-  const col = (number - 1) % GRID, row = Math.floor((number - 1) / GRID);
-  const o = plotOrigin(col, row);
-  return {
-    number, col, row, x: o.x, z: o.z, kind, owner, name: name || null,
-    district: districtAt(o.x + PLOT / 2, o.z + PLOT / 2),
-  };
-}
-export const PLAYER_PLOT = 6;
-export const PLOTS = [
-  mk(1, 'house', 'Adaeze'), mk(2, 'free'), mk(3, 'house', 'Tunde'), mk(4, 'free'),
-  mk(5, 'house', 'Bisi'), mk(6, 'free'), mk(7, 'market', null, 'Yaba Market'), mk(8, 'house', 'Chidi'),
-  mk(9, 'free'), mk(10, 'park', null, 'Freedom Park'), mk(11, 'house', 'Zainab'), mk(12, 'free'),
-  mk(13, 'tower', 'Emeka'), mk(14, 'free'), mk(15, 'free'), mk(16, 'shop', 'Ngozi'),
-];
-
-export const SPAWN = { x: 84, y: 1, z: 95, yaw: Math.PI, pitch: 0.12 };
-
-const Q = new Int32Array(1 << 21);   // BFS ring buffer for light propagation
+const Q = new Int32Array(1 << 22);   // BFS ring buffer for light propagation
 const QMASK = Q.length - 1;
 
 export class World {
@@ -69,6 +27,7 @@ export class World {
     this.blk = new Uint8Array(n);    // lamp light 0-15
     this.top = new Uint8Array(NCX * NCZ);   // highest written y + 1 per chunk column
     this.dirty = new Set();
+    this.bulk = false;                 // while true, set() skips dirty tracking (used during generation)
   }
 
   index(x, y, z) { return (y * SZ + z) * SX + x; }
@@ -83,7 +42,18 @@ export class World {
     if (x < 0 || z < 0 || x >= SX || z >= SZ || y < 0) return FULL_BOX;
     if (y >= HEIGHT) return null;
     const i = (y * SZ + z) * SX + x, id = this.data[i];
-    return SOLID[id] ? shapeBoxes(id, this.meta[i]) : null;
+    if (!SOLID[id]) return null;
+    return shapeBoxes(id, this.meta[i], CONNECTING[id] ? this.connMask(x, y, z, id) : 0);
+  }
+
+  // Which horizontal neighbours a fence or pane joins up with: 1 north (-z), 2 east (+x), 4 south (+z), 8 west (-x).
+  connMask(x, y, z, id) {
+    let m = 0;
+    if (connects(id, this.get(x, y, z - 1))) m |= 1;
+    if (connects(id, this.get(x + 1, y, z))) m |= 2;
+    if (connects(id, this.get(x, y, z + 1))) m |= 4;
+    if (connects(id, this.get(x - 1, y, z))) m |= 8;
+    return m;
   }
 
   set(x, y, z, id, meta = 0) {
@@ -93,6 +63,7 @@ export class World {
     this.meta[i] = meta;
     const k = (z >> 4) * NCX + (x >> 4);
     if (id !== 0 && y + 1 > this.top[k]) this.top[k] = y + 1;
+    if (this.bulk) return;
     for (let dz = -1; dz <= 1; dz++) for (let dx = -1; dx <= 1; dx++) {
       const nx = x + dx, nz = z + dz;
       if (nx < 0 || nz < 0 || nx >= SX || nz >= SZ) continue;
@@ -183,7 +154,7 @@ export class World {
   propagate(arr, x0, x1, z0, z1) {
     const data = this.data;
     let head = 0, tail = 0;
-    const push = (i) => { Q[tail & QMASK] = i; tail++; };
+    const push = (i) => { if (tail - head < QMASK) { Q[tail & QMASK] = i; tail++; } };   // dropping is safe: light just stops spreading
     const canGo = (j, v) => !OPAQUE[data[j]] && arr[j] < v - 1;
 
     // seeds: lit cells inside the box that can still spread
@@ -260,10 +231,10 @@ export class World {
   static decodePlot(b64, version = 2) {
     let raw;
     try { raw = atob(b64); } catch { return null; }
-    const rows = version === 1 ? 47 : HEIGHT - 1;
+    const rows = version === 1 ? 47 : PLOT_ROWS;
     const total = PLOT * PLOT * rows;
     const stride = version === 1 ? 3 : 4;
-    const ids = new Uint8Array(PLOT * PLOT * (HEIGHT - 1));
+    const ids = new Uint8Array(PLOT_CELLS);
     const metas = new Uint8Array(ids.length);
     let p = 0;
     for (let i = 0; i + stride - 1 < raw.length; i += stride) {
@@ -277,11 +248,35 @@ export class World {
     return p === total ? { ids, metas } : null;
   }
 
+  // Writes a plot's ids/metas (the flat y-major layout shared with the server) into the world.
   applyPlot(plot, decoded) {
     const { ids, metas } = decoded;
     let p = 0;
     for (let y = 1; y < HEIGHT; y++) for (let z = 0; z < PLOT; z++) for (let x = 0; x < PLOT; x++, p++) {
       this.set(plot.x + x, y, plot.z + z, ids[p], metas[p]);
+    }
+  }
+
+  // The plot's current contents in the shared flat layout (what the server stores and the REPLACE message carries).
+  readPlotArrays(plot) {
+    const ids = new Uint8Array(PLOT_CELLS), metas = new Uint8Array(PLOT_CELLS);
+    let p = 0;
+    for (let y = 1; y < HEIGHT; y++) for (let z = 0; z < PLOT; z++) for (let x = 0; x < PLOT; x++, p++) {
+      const i = this.index(plot.x + x, y, plot.z + z);
+      ids[p] = this.data[i]; metas[p] = this.meta[i];
+    }
+    return { ids, metas };
+  }
+
+  clearPlot(plot) {
+    this.fillBox(plot.x, 1, plot.z, plot.x + PLOT - 1, HEIGHT - 1, plot.z + PLOT - 1, B.AIR);
+  }
+
+  // Recolours the ground-level border of a plot (yellow = yours, white = free, concrete = someone else's).
+  setRing(plot, id) {
+    for (let i = 0; i < PLOT; i++) {
+      this.set(plot.x + i, 0, plot.z, id); this.set(plot.x + i, 0, plot.z + PLOT - 1, id);
+      this.set(plot.x, 0, plot.z + i, id); this.set(plot.x + PLOT - 1, 0, plot.z + i, id);
     }
   }
 }
