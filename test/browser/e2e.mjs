@@ -55,6 +55,10 @@ async function openGame(page, url = URL) {
   if (await page.$('#fatal:not(.hidden)')) throw new Error('the game could not start: ' + await page.textContent('#fatal-text'));
 }
 const started = (page) => page.waitForFunction(() => window.__naija && window.__naija.state.started, { timeout: 60000 });
+// Software rendering is slow, so network events can take a moment to be handled: poll instead of sleeping.
+async function until(page, fn, arg, timeout = 20000) {
+  try { await page.waitForFunction(fn, arg, { timeout, polling: 250 }); return true; } catch { return false; }
+}
 
 async function pickPlot(page, number) {
   const box = await page.$eval('#claim-map', (c) => { const r = c.getBoundingClientRect(); return { x: r.left, y: r.top, w: r.width, h: r.height }; });
@@ -78,18 +82,19 @@ try {
   const mine = await A.evaluate(() => window.__naija.G.myPlot);
   check('each player owns the plot they chose', mine.number === 18 && (await B.evaluate(() => window.__naija.G.myPlot.number)) === 19);
   await A.evaluate((p) => { const n = window.__naija, e = []; for (let x = 4; x < 12; x++) for (let y = 1; y < 4; y++) e.push([p.x + x, y, p.z + 10, 5, 0]); n.applyEdits(e); }, mine);
-  await sleep(2000);
-  check("B sees A's wall", (await B.evaluate((p) => window.__naija.world.get(p.x + 5, 2, p.z + 10), mine)) === 5);
+  check("B sees A's wall", await until(B, (p) => window.__naija.world.get(p.x + 5, 2, p.z + 10) === 5, mine));
   const denied = await B.evaluate((p) => window.__naija.canEdit(p.x + 5, 2, p.z + 10), mine);
   check("B cannot edit A's plot", denied === false);
+  // headless Chromium may refuse pointer lock, which pauses the game: resume so the keyboard shortcuts work
+  await A.evaluate(() => { const n = window.__naija; if (n.state.mode !== 'playing') n.showMode('playing'); });
   await A.keyboard.press('Enter');
+  check('Enter opens the chat box', await until(A, () => window.__naija.state.mode === 'chat' && document.activeElement && document.activeElement.id === 'chat-input', undefined, 5000));
   await A.keyboard.type('How far, Lagos!');
   await A.keyboard.press('Enter');
-  await sleep(1500);
-  check('chat arrives', (await B.$$eval('#chat-log .msg', (els) => els.map((e) => e.textContent))).some((t) => t.includes('How far, Lagos!')));
+  const gotChat = await until(B, () => [...document.querySelectorAll('#chat-log .msg')].some((e) => e.textContent.includes('How far, Lagos!')));
+  check('chat arrives', gotChat, gotChat ? '' : `A saw ${JSON.stringify(await A.$$eval('#chat-log .msg', (l) => l.map((e) => e.textContent)))}, B saw ${JSON.stringify(await B.$$eval('#chat-log .msg', (l) => l.map((e) => e.textContent)))}, A mode ${await A.evaluate(() => window.__naija.state.mode)}`);
   await A.evaluate(() => { const n = window.__naija; n.player.pos = { x: 100, y: 1, z: 150 }; });
-  await sleep(2500);
-  check('B sees the avatar of A', await B.evaluate(() => [...window.__naija.remote.players.values()].some((r) => r.samples.length > 0)));
+  check('B sees the avatar of A', await until(B, () => [...window.__naija.remote.players.values()].some((r) => r.samples.length > 0)));
   check('the players list counts both', (await A.evaluate(() => window.__naija.G.online.players.size)) === 2);
   await A.context().close(); await B.context().close();
 

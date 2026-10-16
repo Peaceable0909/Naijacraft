@@ -45,7 +45,7 @@ export function createChat({ onSend, onOpenChange }) {
     open = v;
     root.classList.toggle('open', v);
     form.classList.toggle('hidden', !v);
-    if (v) { root.classList.remove('hidden'); input.value = ''; setTimeout(() => input.focus(), 0); } else input.blur();
+    if (v) { root.classList.remove('hidden'); input.value = ''; input.focus(); setTimeout(() => input.focus(), 0); } else input.blur();   // focus now so fast typists lose no letters
     onOpenChange?.(v);
   }
 
