@@ -30,8 +30,8 @@ browser                                         Cloudflare (free plan)
 
 - `shared/layout.js` defines the grid: 8 x 8 plots of 32 x 32 blocks, 8-block roads (`PITCH` = 40), a 328 x 328 city,
   a 28-block beach strip to the south, world height 64. Plot rows hold y = 1..63 (`PLOT_ROWS`); y = 0 is the ground.
-- 17 plots are landmarks and show homes (not claimable); 47 are free land. `OFFLINE_PLOT` (28) is the plot offline
-  players use.
+- 17 plots are landmarks and show homes (not claimable); 47 are free land. `OFFLINE_PLOT` (the free plot nearest the plaza) is the
+  plot offline players use.
 - `js/city.js` generates the whole city **deterministically** from one seeded random stream, so every browser builds
   the identical city and the server never stores it. Only what players build is stored.
 - **Orientation.** The 3D view is left-handed (Babylon): looking north (-z), +x is on your *left*. So that maps match
@@ -110,7 +110,7 @@ Three ways in: guest (instant), username + password, Google. Everything is in `w
 
 - `main.js` boots the engine, generates and meshes the city, creates the UI controllers, and runs the game loop.
   `game.js` holds the shared context (`G`) that `building.js`, `online.js` and friends read.
-- **Online vs offline.** Offline, `G.online` is null: the player owns plot 28 and the plot is saved to `localStorage`.
+- **Online vs offline.** Offline, `G.online` is null: the player owns `OFFLINE_PLOT` and the plot is saved to `localStorage`.
   Online, the server owns the truth and nothing is saved locally except cosmetic settings. `building.js` applies every
   edit locally first (building feels instant) and then sends it; a rejected edit is corrected by the server's resync.
 - **Shared clock.** After `welcome` the client knows `serverNow`. Day/night, the weather (8-minute slots hashed from the

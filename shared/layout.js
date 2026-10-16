@@ -108,7 +108,7 @@ export function plotFront(plot) {
 }
 
 export const SPAWN = { x: CITY / 2, y: 1, z: CITY / 2 + 11, yaw: Math.PI, pitch: 0.12 };
-export const OFFLINE_PLOT = 28;   // the free plot next to the plaza that offline players use
+export const OFFLINE_PLOT = claimOrder()[0].number;   // the free plot nearest the plaza: offline players use it too
 
 // Index of a cell inside a plot's flat arrays: y-major from y = 1, then z, then x.
 export function cellIndex(px, y, pz) {

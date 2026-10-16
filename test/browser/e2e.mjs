@@ -152,7 +152,7 @@ try {
   await D.evaluate(() => window.__naija.enterOffline('Reggie'));
   await started(D);
   const plot = await D.evaluate(() => { const p = window.__naija.G.myPlot; return { x: p.x, z: p.z, n: p.number }; });
-  check('offline players own plot 28', plot.n === 28);
+  check('offline players own the plot next to the plaza', plot.n === (await D.evaluate(async () => (await import('./shared/layout.js')).OFFLINE_PLOT)));
   const placed = await D.evaluate((p) => {
     const n = window.__naija; n.settings.freezeTime = true;
     const pl = n.player; pl.pos = { x: p.x + 10.5, y: 1, z: p.z + 6.5 }; pl.flying = true; pl.yaw = 0; pl.pitch = 0.9;
