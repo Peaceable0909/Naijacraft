@@ -454,6 +454,24 @@ test('admin: summary, players, kick, announce, release and unknown commands', as
   assert.ok((await w.core.admin({ cmd: 'nope' })).error);
 });
 
+test('admin export: every plot comes out as JSON that can be inflated back into blocks', async () => {
+  const w = makeWorld();
+  const a = await w.join('Adaeze'), b = await w.join('Bisi');
+  await w.say(a, { t: 'claim', plot: 'auto' });
+  await w.say(b, { t: 'claim', plot: 'auto' });
+  await w.place(a, a.s.plot, [[3, 1, 4, 5, 0], [4, 2, 4, 6, 0]]);
+  const out = await w.core.admin({ cmd: 'export' });
+  assert.equal(out.version, 1);
+  assert.deepEqual(out.plots.map((p) => p.owner).sort(), ['Adaeze', 'Bisi']);
+  const mine = out.plots.find((p) => p.owner === 'Adaeze');
+  const theirs = out.plots.find((p) => p.owner === 'Bisi');
+  assert.equal(theirs.data, null, 'a plot nobody has built on has no data');
+  const { b64urlDecode } = await import('../../../shared/b64.js');
+  const parts = P.splitPlotBytes(await P.inflate(b64urlDecode(mine.data)));
+  assert.equal(parts.ids[idxOf(3, 1, 4)], 5);
+  assert.equal(parts.ids[idxOf(4, 2, 4)], 6);
+});
+
 test('releaseUser (account deletion): land freed, profile removed, session closed', async () => {
   const w = makeWorld();
   const a = await w.join('Adaeze');

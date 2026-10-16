@@ -3,7 +3,7 @@
 //   GET  /stats             how many players are online and how many plots are free
 //   GET  /ws                WebSocket into the world
 //   *    /auth/*            accounts (guest, password, Google)
-//   *    /admin/*           moderation tools, protected by the ADMIN_TOKEN secret
+//   *    /admin/*           moderation tools and backups, protected by the ADMIN_TOKEN secret
 import { Accounts } from './accounts.js';
 import { World } from './world.js';
 import { json, readJson, bearer, isAdmin, allowedOrigin, withCors } from './http.js';
@@ -68,6 +68,7 @@ async function handleAdmin(request, env, url) {
     case 'players': return json(await w.admin({ cmd: 'players' }));
     case 'reports': return json(await w.admin({ cmd: 'reports', limit: Number(url.searchParams.get('limit')) || 50 }));
     case 'lookup': return json((await a.call('adminLookup', { name: url.searchParams.get('name') || '' })) || { error: 'not found' });
+    case 'export': return json(await w.admin({ cmd: 'export' }));
     case 'announce': return json(await w.admin({ cmd: 'announce', text: body.text }));
     case 'release': return json(await w.admin({ cmd: 'release', plot: body.plot }));
     case 'kick': return json(await w.admin({ cmd: 'kick', name: body.name }));

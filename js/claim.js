@@ -83,6 +83,16 @@ export function createClaimScreen({ minimap, getOwners, onClaim }) {
     }
   }
 
+  // On short screens (a phone held sideways) the map is sized to fit the height so nothing needs scrolling.
+  function layout() {
+    const wrap = canvas.parentElement;
+    const head = $('claim').querySelector('.claim-head');
+    const avail = window.innerHeight - (head ? head.offsetHeight : 0) - 56;
+    const byHeight = Math.max(220, avail) * (canvas.width / canvas.height);
+    canvas.style.width = Math.min(wrap.clientWidth || 640, byHeight, 640) + 'px';
+  }
+  window.addEventListener('resize', () => { if (open) layout(); });
+
   function redraw() { if (open) { draw(); info(); } }
 
   canvas.addEventListener('mousemove', (e) => {
@@ -114,7 +124,7 @@ export function createClaimScreen({ minimap, getOwners, onClaim }) {
   $('claim-auto').addEventListener('click', () => submit('auto'));
 
   return {
-    show() { open = true; selected = null; hover = null; busy = false; $('claim-error').textContent = ''; $('claim').classList.remove('hidden'); draw(); info(); },
+    show() { open = true; selected = null; hover = null; busy = false; $('claim-error').textContent = ''; $('claim').classList.remove('hidden'); layout(); draw(); info(); },
     hide() { open = false; $('claim').classList.add('hidden'); },
     redraw,
     // Shows the server's refusal ("someone else got that plot first") inside the screen.

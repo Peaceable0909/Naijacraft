@@ -176,7 +176,9 @@ kbd { background: rgba(255, 255, 255, .12); border: 1px solid var(--line-2); bor
 .legend li { display: flex; align-items: center; gap: 8px; }
 .lg { width: 14px; height: 14px; border-radius: 4px; display: inline-block; border: 2px solid; }
 .lg.free { border-color: #7dffb4; background: rgba(125, 255, 180, .25); } .lg.taken { border-color: #aab5ae; background: rgba(60, 70, 64, .8); } .lg.mark { border-color: var(--gold); background: rgba(255, 200, 61, .2); } .lg.sel { border-color: #fff; background: rgba(255, 255, 255, .5); }
-@media (max-width: 860px) { .claim-body { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 860px) and (orientation: portrait) { .claim-body { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 860px) and (orientation: landscape) { .claim-body { grid-template-columns: minmax(0, 1fr) 240px; gap: 14px; } .claim-side { padding: 12px; } }
+@media (max-height: 560px) { .claim-head p { display: none; } .claim-head h2 { font-size: 1.5rem; } .claim-head { margin-bottom: 8px; } #claim { padding-top: 8px; } }
 
 /* ---------------------------------------------------------------- HUD */
 #hud { position: fixed; inset: 0; pointer-events: none; z-index: 5; }
@@ -296,7 +298,7 @@ body.third #crosshair, body.lookmode #crosshair { opacity: .6; }
 .t-btn.small { width: auto; height: 36px; border-radius: 18px; font-size: .8rem; padding: 0 12px; }
 .t-btn.on { background: rgba(255, 200, 61, .85); color: #3b2a00; }
 
-@media (pointer: coarse) { #crosshair { width: 26px; height: 26px; } #hint-bar { display: none; } #chat { bottom: max(176px, calc(var(--sab) + 168px)); } }
+@media (pointer: coarse) { #compass { display: none; } #crosshair { width: 26px; height: 26px; } #hint-bar { display: none; } #chat { bottom: max(176px, calc(var(--sab) + 168px)); } }
 @media (max-width: 760px) {
   #compass { display: none; }
   #info { max-width: calc(100vw - 190px); padding: 7px 11px; }

@@ -15,10 +15,11 @@ import {
 } from '../../shared/protocol.js';
 import { cleanText, maskBlocked, containsBlocked } from '../../shared/moderation.js';
 import { Bucket } from './ratelimit.js';
+import { b64urlEncode } from '../../shared/b64.js';
 
 export const CLOSE = { REPLACED: 4001, BANNED: 4002, PROTOCOL: 4003, FULL: 4004, IDLE: 4005, OUTDATED: 4006, AUTH: 4007 };
 export const DAY_MS = 20 * 60 * 1000;          // one Lagos day lasts 20 real minutes
-const FLUSH_MS = 3000;
+const FLUSH_MS = 1500;                         // edits reach SQLite at most this long after they are made
 const HEARTBEAT_MS = 2000;                      // re-send idle players this often so clients know they are still in range
 const MAX_TEXT_FRAME = 8192;
 const MAX_BINARY_FRAME = 1 << 20;
@@ -585,6 +586,13 @@ export class WorldCore {
       case 'reports': {
         const limit = Math.max(1, Math.min(200, Number(cmd.limit) || 50));
         return this.sql.exec('SELECT * FROM reports ORDER BY id DESC LIMIT ?', limit).toArray().map((r) => ({ ...r, context: JSON.parse(r.context) }));
+      }
+      case 'export': {                       // every plot as JSON, for backups: data is base64url of the raw-deflated ids || metas
+        await this.ensureAllBlobs();
+        return {
+          version: 1, exportedAt: this.now(),
+          plots: [...this.plots.values()].map((p) => ({ number: p.number, uid: p.uid, owner: p.ownerName, plotName: p.plotName, ver: p.ver, data: p.blob ? b64urlEncode(p.blob) : null })),
+        };
       }
       case 'kick': {
         const s = [...this.sessions.values()].find((o) => o.name && o.name.toLowerCase() === String(cmd.name).toLowerCase());
