@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  unit:
+    name: Unit tests and bundle check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm test
+      - name: Worker bundles
+        working-directory: worker
+        run: |
+          npm ci
+          npm run build:client
+          npx wrangler deploy --dry-run --outdir /tmp/worker-bundle
+
+  integration:
+    name: Real Workers runtime
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - working-directory: worker
+        run: |
+          npm ci
+          npm run test:integration
+
+  e2e:
+    name: Browser end to end
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install
+      - run: npx playwright install --with-deps chromium
+      - working-directory: worker
+        run: npm ci
+      - run: npm run test:e2e

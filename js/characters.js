@@ -17,6 +17,17 @@ export const OUTFITS = [
 export const HATS = ['None', 'Fila cap', 'Gele headwrap', 'Cap', 'Hard hat'];
 export const DEFAULT_LOOK = { skin: 2, outfit: 0, hat: 0 };
 
+// Emotes players can play. The ids are sent over the network (1-8), so only ever append.
+export const EMOTES = [
+  { id: 1, kind: 'wave', label: 'Wave', text: 'Hello!' },
+  { id: 2, kind: 'dance', label: 'Dance', text: 'Shaku shaku!' },
+  { id: 3, kind: 'cheer', label: 'Cheer', text: 'Yaaay!' },
+  { id: 4, kind: 'clap', label: 'Clap', text: 'Well done!' },
+  { id: 5, kind: 'laugh', label: 'Laugh', text: 'Hahaha!' },
+  { id: 6, kind: 'salute', label: 'Salute', text: 'Respect!' },
+];
+export const EMOTE_SECONDS = 4.5;
+
 let atlasCanvas = null;
 const patternCache = new Map();
 export function setCharacterAtlas(atlas) { atlasCanvas = atlas; }
@@ -122,19 +133,52 @@ export function createCharacter(scene, look = DEFAULT_LOOK, name = 'char') {
   }
 
   let phase = 0;
+  // Poses override the walking swing for a moment. t = seconds since the pose began.
+  function applyPose(kind, t) {
+    const [L, R] = arms;
+    switch (kind) {
+      case 'wave': R.rotation.x = -2.7 + Math.sin(t * 9) * 0.22; R.rotation.z = -0.1; break;
+      case 'dance': {
+        const k = Math.sin(t * 9);
+        L.rotation.x = -2.4 + k * 0.5; R.rotation.x = -2.4 - k * 0.5;
+        legs[0].rotation.x = k * 0.55; legs[1].rotation.x = -k * 0.55; head.rotation.z = Math.sin(t * 4.5) * 0.15;
+        break;
+      }
+      case 'cheer': {
+        const k = Math.sin(t * 10) * 0.25;
+        L.rotation.x = R.rotation.x = -3.0 + k; L.rotation.z = 0.2; R.rotation.z = -0.2;
+        break;
+      }
+      case 'clap': {
+        const c = (Math.sin(t * 14) * 0.5 + 0.5) * 0.4;
+        L.rotation.x = R.rotation.x = -1.4; L.rotation.z = c; R.rotation.z = -c;
+        break;
+      }
+      case 'laugh': {
+        const k = Math.sin(t * 16) * 0.12;
+        head.rotation.x = -0.28 + k; L.rotation.x = R.rotation.x = -0.7 + k * 0.6;
+        break;
+      }
+      case 'salute': R.rotation.x = -2.1; R.rotation.z = -0.4; break;
+      default: break;
+    }
+  }
   return {
     root,
     head,
-    animate(dt, speed) {
+    animate(dt, speed, pose = null) {
       const amp = Math.min(1, speed / 4);
       phase += dt * (3 + speed * 1.6);
       const s = Math.sin(phase) * 0.7 * amp;
       legs[0].rotation.x = s; legs[1].rotation.x = -s;
       arms[0].rotation.x = -s * 0.8; arms[1].rotation.x = s * 0.8;
+      arms[0].rotation.z = arms[1].rotation.z = 0;
+      head.rotation.x = head.rotation.z = 0;
+      if (pose) applyPose(pose.kind, pose.t);
     },
     wave(t) { arms[1].rotation.x = -2.6 + Math.sin(t * 10) * 0.3; arms[1].rotation.z = -0.2; },
     stopWave() { arms[1].rotation.z = 0; },
-    setLight(c) { for (const m of mats) m.setColor3('light', c); },
+    setLight(c) { const open = c.open === undefined ? 1 : c.open; for (const m of mats) { m.setColor3('light', c); m.setFloat('openSky', open); } },
     setVisible(v) { root.getChildMeshes().forEach((m) => m.setEnabled(v)); },
     dispose() { root.dispose(); mats.forEach((m) => m.dispose()); },
   };

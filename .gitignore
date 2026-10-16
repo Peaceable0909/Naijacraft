@@ -1,3 +1,12 @@
 node_modules/
 .DS_Store
 *.log
+
+# Cloudflare local state and secrets
+.wrangler/
+.dev.vars
+worker/.wrangler/
+worker/.dev.vars
+
+# generated copy of the browser game that the Worker serves
+worker/public/

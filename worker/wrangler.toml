@@ -1,0 +1,43 @@
+# Naijacraft world server: accounts + multiplayer on Cloudflare Workers and Durable Objects.
+# Deploy:  cd worker && npm install && npx wrangler deploy      (see docs/DEPLOY.md)
+name = "naijacraft-world"
+main = "src/index.js"
+compatibility_date = "2026-06-01"
+
+# The game itself (index.html, js, css) is copied into ./public by `npm run build:client` and served from the same
+# address as the API, so there is nothing else to host. Static files are free and unlimited.
+[assets]
+directory = "./public"
+
+[[durable_objects.bindings]]
+name = "WORLD"
+class_name = "World"
+
+[[durable_objects.bindings]]
+name = "ACCOUNTS"
+class_name = "Accounts"
+
+# SQLite-backed Durable Objects are the only kind available on the free plan.
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["World", "Accounts"]
+
+[observability]
+enabled = true
+
+[vars]
+# Which websites may call the API. "*" allows any; after you deploy the site, set it to your address, e.g.
+# ALLOWED_ORIGINS = "https://naijacraft.pages.dev"
+ALLOWED_ORIGINS = "*"
+# Optional "Sign in with Google": paste a Google OAuth Web client ID (looks like 123-abc.apps.googleusercontent.com).
+GOOGLE_CLIENT_ID = ""
+# Optional Cloudflare Turnstile (free bot check on sign-up). Set the site key here and the secret with
+# `npx wrangler secret put TURNSTILE_SECRET`.
+TURNSTILE_SITE_KEY = ""
+# Extra words to block in names and chat, comma separated.
+BLOCKED_WORDS = ""
+
+# Secrets (never put these in this file):
+#   npx wrangler secret put ADMIN_TOKEN        enables the /admin moderation endpoints
+#   npx wrangler secret put AUTH_PEPPER        extra protection for stored password verifiers (recommended)
+#   npx wrangler secret put TURNSTILE_SECRET   enables the Turnstile check

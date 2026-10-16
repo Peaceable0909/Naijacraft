@@ -2,134 +2,338 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-  <meta name="theme-color" content="#008751">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#062a1b">
   <title>Naijacraft - Build your own Lagos</title>
-  <meta name="description" content="Naijacraft is a free, in-browser block-building game. Get your own plot in a virtual Lagos and build.">
+  <meta name="description" content="Naijacraft is a free, in-browser building game set in a virtual Lagos. Claim your own plot, build anything, and meet other builders.">
+  <meta property="og:title" content="Naijacraft - Build your own Lagos">
+  <meta property="og:description" content="Free in your browser. Claim a plot in Lagos, build anything, and meet other builders.">
+  <link rel="icon" href="assets/icon.svg" type="image/svg+xml">
+  <link rel="preload" href="assets/fonts/lilita-one-latin.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="assets/fonts/nunito-latin.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
   <canvas id="game" tabindex="0"></canvas>
 
+  <!-- ============================================================ loading -->
   <div id="loading" class="screen">
-    <div class="logo">NAIJACRAFT</div>
-    <div class="flagbar"><i></i><i></i><i></i></div>
-    <p id="loading-text">Loading Lagos...</p>
-    <div class="bar"><div id="loading-fill"></div></div>
+    <div class="brand">
+      <div class="logo">NAIJA<span>CRAFT</span></div>
+      <div class="ankara"></div>
+    </div>
+    <div class="loader">
+      <div class="bar"><div id="loading-fill"></div></div>
+      <p id="loading-text">Loading Lagos...</p>
+    </div>
+    <p id="loading-tip" class="tip"></p>
   </div>
 
+  <!-- ============================================================ menu -->
   <div id="menu" class="screen hidden">
-    <div class="panel wide menu-panel">
-      <div class="logo">NAIJACRAFT</div>
-      <div class="flagbar"><i></i><i></i><i></i></div>
-      <p class="tagline">Your city. Your land. Build your own Lagos.</p>
-      <div class="menu-grid">
-        <div class="menu-col">
-          <label for="username">Choose your username</label>
-          <input id="username" maxlength="16" autocomplete="off" spellcheck="false" placeholder="e.g. PeaceableBuilds">
-          <p id="name-error" class="error"></p>
-          <div class="challenge"><b>This week's challenge</b><span id="menu-challenge"></span></div>
-          <p class="note">You own <b>Plot 06</b> (yellow border) in Ikeja. Build anything, meet the neighbours, ride the vibe from the market to Bar Beach. Press <kbd>H</kbd> in game for all controls.</p>
+    <div class="menu-wrap">
+      <header class="menu-brand">
+        <div class="logo big">NAIJA<span>CRAFT</span></div>
+        <div class="ankara"></div>
+        <p class="tagline">Build your own Lagos. Together.</p>
+        <ul class="perks">
+          <li>Free forever, right in your browser</li>
+          <li>Your own plot of land in a living city</li>
+          <li>Build with friends and visit their homes</li>
+        </ul>
+      </header>
+
+      <section class="card" id="auth-card" aria-live="polite">
+        <!-- returning player -->
+        <div class="view hidden" data-view="back">
+          <p class="eyebrow">Welcome back</p>
+          <h2 id="wb-name"></h2>
+          <p class="muted" id="wb-sub"></p>
+          <button id="wb-play" class="btn primary xl">Enter Lagos</button>
+          <button id="wb-switch" class="btn link">Not you? Use a different account</button>
         </div>
-        <div class="menu-col">
-          <label>Your character</label>
-          <div id="menu-look" class="look-picker"></div>
+
+        <!-- sign in / create / quick play -->
+        <div class="view hidden" data-view="choose">
+          <div class="seg" id="auth-tabs" role="tablist">
+            <button type="button" data-tab="guest" class="on">Quick play</button>
+            <button type="button" data-tab="login">Sign in</button>
+            <button type="button" data-tab="signup">Create account</button>
+          </div>
+
+          <div class="pane" data-pane="guest">
+            <p class="lead">Jump straight in. You can add a password later to keep your land safe.</p>
+            <label class="field-label">Pick your look</label>
+            <div id="menu-look" class="look-picker"></div>
+            <button id="guest-play" type="button" class="btn primary xl">Play as guest</button>
+          </div>
+
+          <form class="pane hidden" data-pane="login" id="login-form" autocomplete="on">
+            <label for="login-name">Username</label>
+            <input id="login-name" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" maxlength="16" placeholder="Your username">
+            <label for="login-pass">Password</label>
+            <input id="login-pass" name="password" type="password" autocomplete="current-password" maxlength="128" placeholder="Your password">
+            <button id="login-go" type="submit" class="btn primary xl">Sign in</button>
+            <button id="forgot-link" type="button" class="btn link">Forgot your password?</button>
+          </form>
+
+          <form class="pane hidden" data-pane="signup" id="signup-form" autocomplete="on">
+            <label for="signup-name">Choose a username</label>
+            <input id="signup-name" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" maxlength="16" placeholder="e.g. PeaceableBuilds">
+            <p id="signup-name-hint" class="hint">3-16 letters, numbers or underscores.</p>
+            <label for="signup-pass">Choose a password</label>
+            <input id="signup-pass" name="new-password" type="password" autocomplete="new-password" maxlength="128" placeholder="At least 8 characters">
+            <p id="signup-pass-hint" class="hint">Easy to remember, hard to guess. A few words work well.</p>
+            <button id="signup-go" type="submit" class="btn primary xl">Create my account</button>
+          </form>
+
+          <div id="google-wrap" class="hidden">
+            <div class="or"><span>or</span></div>
+            <div id="google-slot"></div>
+          </div>
         </div>
+
+        <!-- forgot password -->
+        <form class="view hidden" data-view="recover" id="recover-form" autocomplete="off">
+          <p class="eyebrow">Account recovery</p>
+          <p class="lead">Enter the recovery code you saved when you made your account.</p>
+          <label for="rec-name">Username</label>
+          <input id="rec-name" autocapitalize="none" spellcheck="false" maxlength="16" placeholder="Your username">
+          <label for="rec-code">Recovery code</label>
+          <input id="rec-code" autocapitalize="characters" spellcheck="false" maxlength="24" placeholder="XXXX-XXXX-XXXX-XXXX">
+          <label for="rec-pass">New password</label>
+          <input id="rec-pass" type="password" autocomplete="new-password" maxlength="128" placeholder="At least 8 characters">
+          <button id="rec-go" type="submit" class="btn primary xl">Reset my password</button>
+          <button id="rec-back" type="button" class="btn link">Back to sign in</button>
+        </form>
+
+        <!-- no server configured -->
+        <div class="view hidden" data-view="offline">
+          <p class="eyebrow">Offline mode</p>
+          <p class="lead">This copy of Naijacraft isn't connected to a server, so you'll play alone and your builds are saved on this device.</p>
+          <label for="offline-name" class="field-label">Your name</label>
+          <input id="offline-name" maxlength="16" autocomplete="off" spellcheck="false" placeholder="e.g. PeaceableBuilds">
+          <label class="field-label">Pick your look</label>
+          <div id="offline-look" class="look-picker"></div>
+          <button id="offline-play" type="button" class="btn primary xl">Enter Lagos</button>
+        </div>
+
+        <div class="busy hidden" id="menu-busy"><i></i><span id="menu-busy-text">Connecting...</span></div>
+        <div id="menu-captcha" class="hidden"></div>
+        <p id="menu-error" class="error" role="alert"></p>
+      </section>
+
+      <aside class="menu-side">
+        <div class="stats" id="menu-stats">
+          <div><b id="stat-online">-</b><span>builders online</span></div>
+          <div><b id="stat-free">-</b><span>plots free</span></div>
+        </div>
+        <div class="challenge"><b>This week's challenge</b><span id="menu-challenge"></span></div>
+        <button id="play-offline" class="btn link hidden">Play offline instead</button>
+      </aside>
+    </div>
+    <footer class="menu-foot"><span id="menu-tip"></span></footer>
+  </div>
+
+  <!-- ============================================================ claim land -->
+  <div id="claim" class="screen hidden">
+    <div class="claim-wrap">
+      <div class="claim-head">
+        <h2>Choose your land</h2>
+        <p>Every builder gets one plot: 32 &times; 32 blocks wide and 63 high. Pick the neighbourhood you like, or let us surprise you.</p>
       </div>
-      <p id="touch-note" class="note hidden">On a phone? Use the on-screen stick to move, drag on the right to look, and the buttons to build.</p>
-      <button id="play" class="primary">Enter Lagos</button>
-      <p class="note small">Prototype: your builds save in this browser. Online accounts and a shared city come next.</p>
+      <div class="claim-body">
+        <div class="claim-map-wrap">
+          <canvas id="claim-map" width="656" height="712"></canvas>
+          <div id="claim-tip" class="map-tip hidden"></div>
+        </div>
+        <aside class="claim-side">
+          <div id="claim-info" class="claim-info"></div>
+          <button id="claim-go" class="btn primary xl" disabled>Pick a plot on the map</button>
+          <button id="claim-auto" class="btn">Surprise me</button>
+          <p id="claim-error" class="error"></p>
+          <ul class="legend">
+            <li><i class="lg free"></i>Free land</li>
+            <li><i class="lg taken"></i>Taken</li>
+            <li><i class="lg mark"></i>Landmark</li>
+            <li><i class="lg sel"></i>Selected</li>
+          </ul>
+        </aside>
+      </div>
     </div>
   </div>
 
+  <!-- ============================================================ HUD -->
   <div id="hud" class="hidden">
     <div id="crosshair"></div>
-    <div id="info"><div id="info-plot"></div><div id="info-sub"></div><div id="info-clock"></div><div id="info-pos"></div></div>
-    <canvas id="minimap" width="150" height="171"></canvas>
+    <div id="info" class="glass">
+      <div id="info-plot"></div>
+      <div id="info-sub"></div>
+      <div class="info-row"><span id="info-clock"></span><span id="info-weather"></span></div>
+    </div>
+    <canvas id="compass" width="420" height="40"></canvas>
+    <div id="radar">
+      <canvas id="minimap" width="176" height="176"></canvas>
+      <div id="info-pos"></div>
+      <button id="online-pill" class="pill hidden" title="Players online (Tab)"><i></i><span id="online-count">1</span> online</button>
+    </div>
+    <div id="net-banner" class="hidden"></div>
     <div id="toast"></div>
     <div id="achv"></div>
     <div id="mode-bar" class="hidden"></div>
     <div id="bubbles"></div>
+    <div id="chat" class="hidden">
+      <div id="chat-log"></div>
+      <form id="chat-form" class="hidden" autocomplete="off"><input id="chat-input" maxlength="160" autocomplete="off" spellcheck="true" placeholder="Say something nice..."></form>
+    </div>
+    <div id="hint-bar"></div>
     <div id="hotbar-wrap"><div id="block-name"></div><div id="hotbar"></div></div>
   </div>
+  <div id="vignette"></div>
   <div id="water-tint" class="hidden"></div>
   <div id="flash"></div>
   <div id="touch" class="hidden"></div>
 
+  <!-- ============================================================ overlays -->
   <div id="inventory" class="screen hidden">
     <div class="panel wide">
-      <h2>Blocks &amp; Blueprints</h2>
+      <div class="panel-head"><h2>Blocks &amp; Blueprints</h2><button class="x" data-close="inventory" aria-label="Close">&times;</button></div>
       <div id="inv-tabs" class="tabs"></div>
       <p id="inv-note" class="note"></p>
       <div id="inventory-grid"></div>
-      <button class="close-btn" data-close="inventory">Close (E)</button>
     </div>
   </div>
 
   <div id="pause" class="screen hidden">
     <div class="panel wide">
-      <h2>Paused</h2>
+      <div class="panel-head"><h2>Paused</h2><button class="x" id="pause-close" aria-label="Resume">&times;</button></div>
       <div class="tabs" id="pause-tabs">
         <button data-tab="p-game" class="active">Game</button>
         <button data-tab="p-plot">My plot</button>
         <button data-tab="p-look">Character</button>
+        <button data-tab="p-account" id="tab-account">Account</button>
         <button data-tab="p-achv">Achievements <span id="achv-count"></span></button>
         <button data-tab="p-settings">Settings</button>
       </div>
+
       <section id="p-game" class="ptab">
-        <button id="resume" class="primary">Resume</button>
+        <button id="resume" class="btn primary xl">Resume</button>
         <div class="challenge"><b>This week's challenge</b><span id="pause-challenge"></span></div>
         <div class="btn-row">
-          <button id="open-map">Map &amp; teleport (M)</button>
-          <button id="open-help">Controls (H)</button>
-          <button id="take-photo">Take photo (P)</button>
+          <button id="open-map" class="btn">Map &amp; teleport (M)</button>
+          <button id="open-players" class="btn online-only">Players (Tab)</button>
+          <button id="open-help" class="btn">Controls (H)</button>
+          <button id="take-photo" class="btn">Take photo (P)</button>
         </div>
       </section>
+
       <section id="p-plot" class="ptab hidden">
+        <div id="plot-none" class="callout hidden">You don't have a plot yet. <button id="plot-claim" class="btn small primary">Choose my land</button></div>
         <label for="plot-name">Plot name (shown on your sign)</label>
-        <div class="btn-row"><input id="plot-name" maxlength="24" placeholder="e.g. Peaceable Palace"><button id="save-plot-name">Save</button></div>
+        <div class="btn-row nowrap"><input id="plot-name" maxlength="24" placeholder="e.g. Peaceable Palace"><button id="save-plot-name" class="btn">Save</button></div>
         <label>Share your build</label>
         <p class="note">Copy your build code and send it to a friend on WhatsApp. They can load it on their own plot.</p>
-        <div class="btn-row"><button id="copy-code">Copy build code</button></div>
+        <div class="btn-row"><button id="copy-code" class="btn">Copy build code</button></div>
         <textarea id="code-box" rows="3" placeholder="Paste a build code here to load it onto your plot"></textarea>
-        <div class="btn-row"><button id="load-code">Load build code</button><button id="reset-plot" class="danger">Clear my plot</button></div>
+        <div class="btn-row"><button id="load-code" class="btn">Load build code</button><button id="reset-plot" class="btn danger">Clear my plot</button></div>
+        <div class="btn-row online-only"><button id="release-plot" class="btn danger ghost">Give up this plot</button></div>
       </section>
+
       <section id="p-look" class="ptab hidden">
         <div id="pause-look" class="look-picker"></div>
       </section>
+
+      <section id="p-account" class="ptab hidden">
+        <div id="acct-summary" class="acct-card"></div>
+        <div id="acct-guest" class="acct-block hidden">
+          <h3>Keep your land safe</h3>
+          <p class="note">You're playing as a guest. Choose a username and a password so you can sign back in from any device.</p>
+          <form id="upgrade-form" autocomplete="on">
+            <label for="up-name">Username</label>
+            <input id="up-name" autocomplete="username" autocapitalize="none" spellcheck="false" maxlength="16" placeholder="Pick a username">
+            <label for="up-pass">Password</label>
+            <input id="up-pass" type="password" autocomplete="new-password" maxlength="128" placeholder="At least 8 characters">
+            <button id="up-go" type="submit" class="btn primary">Save my account</button>
+          </form>
+        </div>
+        <div id="acct-rename" class="acct-block hidden">
+          <h3>Change username</h3>
+          <form id="rename-form" class="btn-row nowrap" autocomplete="off"><input id="rn-name" autocapitalize="none" spellcheck="false" maxlength="16" placeholder="New username"><button class="btn" type="submit">Change</button></form>
+        </div>
+        <div id="acct-password" class="acct-block hidden">
+          <h3>Change password</h3>
+          <form id="cp-form" autocomplete="on">
+            <input id="cp-old" type="password" autocomplete="current-password" maxlength="128" placeholder="Current password">
+            <input id="cp-new" type="password" autocomplete="new-password" maxlength="128" placeholder="New password (8+ characters)">
+            <button class="btn" type="submit">Change password</button>
+          </form>
+        </div>
+        <div id="acct-google" class="acct-block hidden">
+          <h3>Link Google</h3>
+          <p class="note">Link your Google account to sign in with one tap next time.</p>
+          <div id="google-link-slot"></div>
+        </div>
+        <div class="acct-block">
+          <div class="btn-row">
+            <button id="acct-signout" class="btn">Sign out</button>
+            <button id="acct-signout-all" class="btn">Sign out everywhere</button>
+            <button id="acct-delete" class="btn danger ghost">Delete my account</button>
+          </div>
+        </div>
+      </section>
+
       <section id="p-achv" class="ptab hidden"><div id="achv-list"></div></section>
+
       <section id="p-settings" class="ptab hidden">
-        <label for="set-view">View distance: <b id="set-view-val"></b></label>
-        <input id="set-view" type="range" min="3" max="12" step="1">
-        <label for="set-res">Graphics resolution</label>
-        <select id="set-res"><option value="1">High (sharpest)</option><option value="1.5">Medium</option><option value="2">Low (fastest)</option></select>
-        <label for="set-sens">Mouse / touch sensitivity</label>
-        <input id="set-sens" type="range" min="0.3" max="2.5" step="0.1">
-        <label for="set-vol">Sound volume</label>
-        <input id="set-vol" type="range" min="0" max="1" step="0.05">
-        <label for="set-time">Time of day: <b id="set-time-val"></b></label>
-        <input id="set-time" type="range" min="0" max="1" step="0.005">
-        <label class="check"><input id="set-freeze" type="checkbox"> Freeze time</label>
-        <label for="set-weather">Weather</label>
-        <select id="set-weather"><option value="auto">Lagos (sun with the odd shower)</option><option value="clear">Always sunny</option><option value="rain">Rainy season</option></select>
-        <p class="note">Tip: lower view distance and resolution if the game runs slowly.</p>
+        <div class="set-grid">
+          <label for="set-quality">Graphics</label>
+          <select id="set-quality">
+            <option value="auto">Auto (recommended)</option>
+            <option value="fast">Fast - best for older phones</option>
+            <option value="balanced">Balanced</option>
+            <option value="beautiful">Beautiful - shadows and glow</option>
+          </select>
+          <label for="set-view">View distance: <b id="set-view-val"></b></label>
+          <input id="set-view" type="range" min="3" max="12" step="1">
+          <label for="set-res">Sharpness</label>
+          <select id="set-res"><option value="1">Sharp</option><option value="1.5">Medium</option><option value="2">Soft (fastest)</option></select>
+          <label for="set-sens">Mouse / touch sensitivity</label>
+          <input id="set-sens" type="range" min="0.3" max="2.5" step="0.1">
+          <label for="set-vol">Sound volume</label>
+          <input id="set-vol" type="range" min="0" max="1" step="0.05">
+          <label for="set-weather">Weather</label>
+          <select id="set-weather"><option value="auto">Lagos (sun with the odd shower)</option><option value="clear">Always sunny</option><option value="rain">Rainy season</option></select>
+        </div>
+        <div id="time-settings" class="set-grid">
+          <label for="set-time">Time of day: <b id="set-time-val"></b></label>
+          <input id="set-time" type="range" min="0" max="1" step="0.005">
+          <label class="check"><input id="set-freeze" type="checkbox"> Freeze time</label>
+        </div>
+        <p id="time-note" class="note hidden">Online, everyone shares the same Lagos clock.</p>
+        <p class="note">Tip: pick <b>Fast</b> or a softer sharpness if the game runs slowly.</p>
       </section>
     </div>
   </div>
 
   <div id="map" class="screen hidden">
     <div class="panel wide">
-      <h2>Map of Lagos</h2>
+      <div class="panel-head"><h2>Map of Lagos</h2><button class="x" data-close="map" aria-label="Close">&times;</button></div>
       <p class="note">Click anywhere on the map to teleport there.</p>
-      <canvas id="bigmap" width="420" height="510"></canvas>
+      <canvas id="bigmap" width="656" height="712"></canvas>
       <div class="btn-row" id="warp-buttons"></div>
-      <button class="close-btn" data-close="map">Close (M)</button>
+    </div>
+  </div>
+
+  <div id="players" class="screen hidden">
+    <div class="panel">
+      <div class="panel-head"><h2>Builders online</h2><button class="x" data-close="players" aria-label="Close">&times;</button></div>
+      <div id="players-list"></div>
     </div>
   </div>
 
   <div id="help" class="screen hidden">
     <div class="panel wide">
-      <h2>Controls</h2>
+      <div class="panel-head"><h2>Controls</h2><button class="x" data-close="help" aria-label="Close">&times;</button></div>
       <div class="help-grid">
         <span><kbd>W A S D</kbd></span><span>Move (arrows work too)</span>
         <span><kbd>Mouse</kbd></span><span>Look around</span>
@@ -146,18 +350,46 @@
         <span><kbd>G</kbd> / <kbd>X</kbd></span><span>Fill area with block / clear area</span>
         <span><kbd>C</kbd> / <kbd>V</kbd></span><span>Copy area / paste it</span>
         <span><kbd>R</kbd></span><span>Rotate a paste or blueprint</span>
+        <span><kbd>Enter</kbd> / <kbd>/</kbd></span><span>Chat with other builders</span>
+        <span><kbd>Tab</kbd></span><span>See who is online</span>
+        <span><kbd>B</kbd></span><span>Emotes: wave, dance and more</span>
         <span><kbd>T</kbd></span><span>Switch camera (first / third person)</span>
         <span><kbd>M</kbd></span><span>Map and teleport</span>
         <span><kbd>P</kbd></span><span>Take a photo</span>
-        <span><kbd>Esc</kbd></span><span>Pause, settings, character, share</span>
+        <span><kbd>Esc</kbd></span><span>Pause, settings, character, account</span>
       </div>
-      <button class="close-btn" data-close="help">Close (H)</button>
     </div>
   </div>
 
-  <div id="fatal" class="screen hidden"><div class="panel"><h2>Naijacraft can't start</h2><p id="fatal-text"></p></div></div>
+  <div id="emotes" class="hidden"><div id="emote-ring"></div></div>
 
-  <script src="https://cdn.jsdelivr.net/npm/babylonjs@7.31.0/babylon.js"></script>
-  <script type="module" src="js/main.js"></script>
+  <!-- generic dialog -->
+  <div id="modal" class="screen hidden">
+    <div class="panel dialog">
+      <h2 id="modal-title"></h2>
+      <div id="modal-body"></div>
+      <div id="modal-actions" class="btn-row"></div>
+    </div>
+  </div>
+
+  <div id="fatal" class="screen hidden"><div class="panel dialog"><h2>Naijacraft can't start</h2><p id="fatal-text"></p><div class="btn-row"><button class="btn primary" onclick="location.reload()">Try again</button></div></div></div>
+
+  <script>
+    // If the main CDN is blocked, fall back to a second one before the game starts.
+    (function () {
+      var urls = ['https://cdn.jsdelivr.net/npm/babylonjs@7.31.0/babylon.js', 'https://unpkg.com/babylonjs@7.31.0/babylon.js'];
+      window.__babylonReady = new Promise(function (resolve) {
+        (function load(i) {
+          if (i >= urls.length) return resolve(false);
+          var s = document.createElement('script');
+          s.src = urls[i];
+          s.onload = function () { resolve(true); };
+          s.onerror = function () { s.remove(); load(i + 1); };
+          document.head.appendChild(s);
+        })(0);
+      });
+    })();
+  </script>
+  <script type="module" src="js/boot.js"></script>
 </body>
 </html>

@@ -1,7 +1,7 @@
 // Blueprints: ready-made structures players can drop onto their plot, plus helpers to rotate
 // structures and draw isometric previews. Structures are { w, h, d, cells: [[x,y,z,id,meta]] }
 // with y = 0 being the first layer above the ground.
-import { B, BLOCKS, shapeBoxes, TILE, ATLAS_COLS, T } from './blocks.js';
+import { B, BLOCKS, CONNECTING, shapeBoxes, TILE, ATLAS_COLS, T } from './blocks.js';
 
 class Builder {
   constructor() { this.map = new Map(); }
@@ -237,10 +237,10 @@ function face(g, atlas, tile, P0, Pu, Pv, sx0, sy0, sw, sh, shade) {
 }
 
 // Draw one block (any shape) at cell (cx, cy, cz).
-function drawBlock(g, atlas, id, meta, cx, cy, cz, s, ox, oy) {
+function drawBlock(g, atlas, id, meta, cx, cy, cz, s, ox, oy, nb = 0) {
   const b = BLOCKS[id];
   const tiles = b.render === 'door' ? (meta & 8 ? T.door_top : T.door_bottom) : null;
-  for (const bx of shapeBoxes(id, meta)) {
+  for (const bx of shapeBoxes(id, meta, nb)) {
     const [x0, y0, z0, x1, y1, z1] = [bx[0] + cx, bx[1] + cy, bx[2] + cz, bx[3] + cx, bx[4] + cy, bx[5] + cz];
     // top
     face(g, atlas, tiles ?? b.top, iso(x0, y1, z0, s, ox, oy), iso(x1, y1, z0, s, ox, oy), iso(x0, y1, z1, s, ox, oy), bx[0], bx[2], bx[3] - bx[0], bx[5] - bx[2], 0);
@@ -265,6 +265,10 @@ export function makeBlockIcon(atlas, id, size = 44) {
   }
   const s = size * 0.46;
   const meta = b.render === 'stairs' ? 3 : 0;
+  if (CONNECTING[id]) {                                  // fences and panes: draw a short run so the icon shows the rails
+    for (const dz of [-0.5, 0.5]) drawBlock(g, atlas, id, 0, 0, 0, dz, s, size / 2, size / 2 - s * 0.05, 5);
+    return c;
+  }
   drawBlock(g, atlas, id, meta, 0, 0, 0, s, size / 2, size / 2 - s * 0.05);
   return c;
 }

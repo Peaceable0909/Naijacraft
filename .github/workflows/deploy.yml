@@ -1,0 +1,35 @@
+# Publishes the game and the server to Cloudflare whenever main changes.
+# Needs two repository secrets (see docs/DEPLOY.md, section 8): CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID.
+# Without them the workflow still runs the tests and then skips the deploy step.
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm test
+      - name: Deploy to Cloudflare
+        if: env.CLOUDFLARE_API_TOKEN != ''
+        working-directory: worker
+        run: |
+          npm ci
+          npm run deploy
+      - name: Skipped
+        if: env.CLOUDFLARE_API_TOKEN == ''
+        run: echo "No CLOUDFLARE_API_TOKEN secret set, so nothing was deployed. See docs/DEPLOY.md section 8."

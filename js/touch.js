@@ -13,6 +13,8 @@ export function createTouchControls(root, handlers) {
       <button class="t-btn small" data-act="fly">Fly</button>
       <button class="t-btn small" data-act="view">View</button>
       <button class="t-btn small" data-act="inventory">Blocks</button>
+      <button class="t-btn small" data-act="chat">Chat</button>
+      <button class="t-btn small" data-act="emote">Emote</button>
       <button class="t-btn small" data-act="map">Map</button>
       <button class="t-btn small" data-act="pause">☰</button>
     </div>`;
