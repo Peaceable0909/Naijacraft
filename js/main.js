@@ -420,7 +420,7 @@ function queueProfileSync() { nextProfileSend = performance.now() + 1500; }
 function syncProfile() {
   nextProfileSend = 0;
   if (!G.online || !G.online.ready) return;
-  G.online.profile({ look: state.look, plotName: state.plotName, achv: achievements.toJSON() });
+  G.online.profile({ look: state.look, achv: achievements.toJSON() });        // the plot name is saved only by its own button
 }
 
 // ------------------------------------------------------------------ playing offline

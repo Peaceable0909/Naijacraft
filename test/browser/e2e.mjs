@@ -117,7 +117,7 @@ try {
   await C.waitForSelector('#claim:not(.hidden)', { timeout: 60000 });
   await C.click('#claim-auto');
   await started(C);
-  await C.evaluate(() => { const n = window.__naija, p = n.G.myPlot, e = []; for (let x = 3; x < 9; x++) e.push([p.x + x, 1, p.z + 5, 5, 0]); n.applyEdits(e); n.G.online.profile({ plotName: 'My Test Palace' }); });
+  await C.evaluate(() => { const n = window.__naija, p = n.G.myPlot, e = []; for (let x = 3; x < 9; x++) e.push([p.x + x, 1, p.z + 5, 5, 0]); n.applyEdits(e); n.state.plotName = 'My Test Palace'; n.G.online.profile({ plotName: 'My Test Palace' }); });
   await sleep(1500);
   await C.evaluate(() => { document.exitPointerLock && document.exitPointerLock(); window.__naija.showMode('paused'); });
   await C.click('#tab-account');
