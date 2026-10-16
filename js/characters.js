@@ -178,7 +178,7 @@ export function createCharacter(scene, look = DEFAULT_LOOK, name = 'char') {
     },
     wave(t) { arms[1].rotation.x = -2.6 + Math.sin(t * 10) * 0.3; arms[1].rotation.z = -0.2; },
     stopWave() { arms[1].rotation.z = 0; },
-    setLight(c) { for (const m of mats) m.setColor3('light', c); },
+    setLight(c) { const open = c.open === undefined ? 1 : c.open; for (const m of mats) { m.setColor3('light', c); m.setFloat('openSky', open); } },
     setVisible(v) { root.getChildMeshes().forEach((m) => m.setEnabled(v)); },
     dispose() { root.dispose(); mats.forEach((m) => m.dispose()); },
   };

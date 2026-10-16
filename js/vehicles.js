@@ -143,7 +143,7 @@ export function createTraffic(scene) {
         }
         for (const l of v.lights) l.scaling.setAll(isNight ? 1.25 : 1);
       }
-      for (const m of [mats.yellow, mats.green, mats.black, mats.glass, mats.tyre]) m.setColor3('light', light);
+      for (const m of [mats.yellow, mats.green, mats.black, mats.glass, mats.tyre]) { m.setColor3('light', light); m.setFloat('openSky', light.open === undefined ? 1 : light.open); }
       return events;
     },
   };

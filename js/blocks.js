@@ -43,6 +43,7 @@ function def(id, name, tiles, opts = {}) {
     opaque: opts.opaque ?? (render === 'cube' && !transparent),
     solid: opts.solid ?? (render !== 'cross' && render !== 'water'),
     light: opts.light || 0,
+    sway: opts.sway || (render === 'cross' ? 1 : 0),      // moves in the wind (plants: 1, leaves: a gentler 0.3)
     placeable: opts.placeable ?? true,
     sound: opts.sound || 'stone',
   };
@@ -68,7 +69,7 @@ def(B.GREEN, 'Green Paint', 'green');
 def(B.YELLOW, 'Yellow Paint', 'yellow');
 def(B.ORANGE, 'Orange Paint', 'orange');
 def(B.LOG, 'Log', ['log_top', 'log_side', 'log_top'], { sound: 'wood' });
-def(B.LEAVES, 'Leaves', 'leaves', { sound: 'soft' });
+def(B.LEAVES, 'Leaves', 'leaves', { sound: 'soft', sway: 0.3 });
 def(B.SAND, 'Sand', 'sand', { sound: 'soft' });
 def(B.WET_SAND, 'Wet Sand', 'wet_sand', { placeable: false, sound: 'soft' });
 def(B.WATER, 'Water', 'water', { render: 'water', transparent: true, sound: 'water' });
@@ -102,7 +103,7 @@ def(B.PLANK_STAIRS, 'Wood Stairs', 'planks', { render: 'stairs', sound: 'wood' }
 def(B.CONCRETE_STAIRS, 'Concrete Stairs', 'concrete', { render: 'stairs' });
 def(B.BRICK_STAIRS, 'Brick Stairs', 'brick', { render: 'stairs' });
 def(B.DOOR, 'Wooden Door', ['door_top', 'door_bottom', 'door_bottom'], { render: 'door', sound: 'wood' });
-def(B.PALM_LEAVES, 'Palm Fronds', 'palm_leaves', { sound: 'soft' });
+def(B.PALM_LEAVES, 'Palm Fronds', 'palm_leaves', { sound: 'soft', sway: 0.5 });
 def(B.TANK, 'Water Tank', ['tank_top', 'tank_side', 'tank_top'], { sound: 'metal' });
 def(B.ZINC_SLAB, 'Zinc Slab', 'zinc', { render: 'slab', sound: 'metal' });
 def(B.ZINC_STAIRS, 'Zinc Stairs', 'zinc', { render: 'stairs', sound: 'metal' });
@@ -509,11 +510,43 @@ export function createAtlasCanvas() {
   return canvas;
 }
 
-// UV rectangle for a tile index: [u0, vBottom, u1, vTop], inset half a texel to stop bleeding.
+// The texture the GPU samples is a padded copy of the atlas: every 16x16 tile sits in a 32x32 cell with an 8 texel
+// border that wraps around the tile. That lets the texture use real mipmaps (no bleeding between neighbouring tiles
+// until the tiles are only a couple of pixels wide) and makes tiling patterns seamless under filtering.
+export const CELL = 32, GUT = 8;
+
+// UV rectangle of a tile inside the padded GPU atlas: [u0, vBottom, u1, vTop].
 export function tileRect(tile) {
   const col = tile % ATLAS_COLS, row = Math.floor(tile / ATLAS_COLS);
-  const eu = 0.5 / (ATLAS_COLS * TILE), ev = 0.5 / (ATLAS_ROWS * TILE);
-  return [col / ATLAS_COLS + eu, 1 - (row + 1) / ATLAS_ROWS + ev, (col + 1) / ATLAS_COLS - eu, 1 - row / ATLAS_ROWS - ev];
+  const W = ATLAS_COLS * CELL, H = ATLAS_ROWS * CELL;
+  return [(col * CELL + GUT) / W, 1 - (row * CELL + GUT + TILE) / H, (col * CELL + GUT + TILE) / W, 1 - (row * CELL + GUT) / H];
+}
+
+// Builds the padded RGBA pixels for the GPU. Transparent texels take the tile's average colour (alpha stays 0) so
+// filtering never drags black into the edges of plants and leaves.
+export function buildGpuAtlas(atlas) {
+  const W = ATLAS_COLS * CELL, H = ATLAS_ROWS * CELL;
+  const aw = atlas.width;
+  const src = atlas.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, aw, atlas.height).data;
+  const out = new Uint8Array(W * H * 4);
+  for (let t = 0; t < TILE_NAMES.length; t++) {
+    const col = t % ATLAS_COLS, row = Math.floor(t / ATLAS_COLS);
+    const sx0 = col * TILE, sy0 = row * TILE, dx0 = col * CELL, dy0 = row * CELL;
+    let r = 0, g = 0, b = 0, n = 0;
+    for (let y = 0; y < TILE; y++) for (let x = 0; x < TILE; x++) {
+      const i = ((sy0 + y) * aw + sx0 + x) * 4;
+      if (src[i + 3] > 128) { r += src[i]; g += src[i + 1]; b += src[i + 2]; n++; }
+    }
+    const avg = n ? [r / n, g / n, b / n] : [128, 128, 128];
+    for (let y = 0; y < CELL; y++) for (let x = 0; x < CELL; x++) {
+      const tx = (((x - GUT) % TILE) + TILE) % TILE, ty = (((y - GUT) % TILE) + TILE) % TILE;
+      const i = ((sy0 + ty) * aw + sx0 + tx) * 4, o = ((dy0 + y) * W + dx0 + x) * 4;
+      const a = src[i + 3];
+      if (a < 16) { out[o] = avg[0]; out[o + 1] = avg[1]; out[o + 2] = avg[2]; } else { out[o] = src[i]; out[o + 1] = src[i + 1]; out[o + 2] = src[i + 2]; }
+      out[o + 3] = a;
+    }
+  }
+  return { data: out, width: W, height: H };
 }
 
 // Average colour of a tile (for the minimap).

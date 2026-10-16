@@ -6,6 +6,7 @@ import { Player } from './player.js';
 import { storage } from './storage.js';
 import { registerShaders, createVoxelMaterials, createSky, createGroundPlanes, computeEnv, applyEnv, clockString, lightColor } from './render.js';
 import { createCharacter, setCharacterAtlas, DEFAULT_LOOK, EMOTES, EMOTE_SECONDS } from './characters.js';
+import { createEffects, detectLevel, LEVELS } from './fx.js';
 import { createResidents } from './npcs.js';
 import { createTraffic } from './vehicles.js';
 import { createMinimap } from './minimap.js';
@@ -29,6 +30,7 @@ import { MAX_BLOCK_ID } from '../shared/layout.js';
 
 const BABYLON = window.BABYLON;
 const DAY_LENGTH = 20 * 60;     // real seconds per Lagos day when playing offline
+const MENU_TIME = 0.6;          // 14:24, bright afternoon light
 const isTouch = G.isTouch;
 const IDLE_INPUT = { f: 0, s: 0, jump: false, down: false, sprint: false };
 
@@ -61,7 +63,7 @@ const state = {
 G.settings = settings; G.profile = profile; G.state = state;
 
 let engine, scene, camera, world, player, hud, sky, minimap, residents, traffic, avatar, achievements, bubbles, touch, chat, remote, claimScreen, menu, accountPanel;
-let pauseLook = null;
+let pauseLook = null, fx = null;
 let materials, env = computeEnv(state.time);
 let auth = null, serverInfo = null, server = '';
 const keys = {};
@@ -137,6 +139,8 @@ async function boot() {
   await meshAll();
   setLoading('Waking up the neighbours...', 0.97);
   await frame();
+  fx = createEffects({ scene, camera, materials, chunkMeshes, NCX, NCZ, CHUNK });
+  applyGraphics();
   minimap = createMinimap(world, atlas);
   G.minimap = minimap;
   residents = createResidents(scene);
@@ -164,6 +168,7 @@ async function boot() {
     exportCode: build.exportCode, importCode: build.importCode, enterOffline, showMode, teleport, setTime: (t) => { state.time = t; },
     get online() { return G.online; }, get menu() { return menu; }, get claimScreen() { return claimScreen; }, get chat() { return chat; },
     enterGame: () => enterOffline(state.name || 'Builder'),
+    applyGraphics, get fx() { return fx; },
   };
 
   // The start screen's pickers share the saved look; a server (if any) is checked while the player reads it.
@@ -268,6 +273,7 @@ function rebuildChunk(cx, cz) {
     meshes.push(mesh);
   }
   chunkMeshes[k] = meshes;
+  fx?.markShadowsDirty();
 }
 
 async function meshAll() {
@@ -763,7 +769,33 @@ let hudTimer = 0, visTimer = 0, saveTimer = 0, achvTimer = 0, mapTimer = 0, comp
 function lightAt(x, y, z) {
   const l = world.lightAt(x, y, z);
   const c = lightColor(env, l.sky, l.blk);
-  return new BABYLON.Color3(c[0], c[1], c[2]);
+  const out = new BABYLON.Color3(c[0], c[1], c[2]);
+  out.open = l.sky >= 14 ? 1 : 0;                  // under open sky the shader adds direct sunlight
+  return out;
+}
+
+// Graphics: the quality preset (Auto picks one for this device) and keeping the frame rate healthy.
+let graphicsLevel = 'balanced';
+function applyGraphics(level) {
+  const want = level || (settings.quality === 'auto' ? detectLevel(engine, isTouch) : settings.quality);
+  graphicsLevel = fx.apply(want);
+}
+const fpsWatch = { t: 0, frames: 0, warm: 0, lowWindows: 0 };
+function watchFrameRate(dt) {
+  // Only on Auto, never in automated browsers, and only once the world has settled after loading.
+  if (settings.quality !== 'auto' || navigator.webdriver || !state.started || state.mode !== 'playing') { fpsWatch.warm = 0; fpsWatch.t = 0; fpsWatch.frames = 0; return; }
+  fpsWatch.warm += dt;
+  if (fpsWatch.warm < 6) return;
+  fpsWatch.t += dt; fpsWatch.frames++;
+  if (fpsWatch.t < 3) return;
+  const fps = fpsWatch.frames / fpsWatch.t;
+  fpsWatch.t = 0; fpsWatch.frames = 0;
+  fpsWatch.lowWindows = fps < 26 ? fpsWatch.lowWindows + 1 : 0;
+  if (fpsWatch.lowWindows >= 2) {                  // two slow windows in a row: step down one level
+    fpsWatch.lowWindows = 0;
+    const i = LEVELS.indexOf(graphicsLevel);
+    if (i > 0) { applyGraphics(LEVELS[i - 1]); toast('Switched to ' + LEVELS[i - 1] + ' graphics to keep things smooth.'); } else if (Number(settings.resolution) < 1.5) { settings.resolution = 1.5; applyResolution(); }
+  }
 }
 
 function inputState() {
@@ -787,10 +819,11 @@ function tick() {
   const online = G.online;
   const live = state.mode === 'playing' || state.mode === 'chat';
 
-  if (online) state.time = online.dayFraction();
+  if (!state.started) state.rain = 0;
+  else if (online) state.time = online.dayFraction();
   else if (!settings.freezeTime) state.time = (state.time + dt / DAY_LENGTH) % 1;
-  updateWeather(dt);
-  env = computeEnv(state.time, state.rain);
+  if (state.started) updateWeather(dt);
+  env = computeEnv(state.started ? state.time : MENU_TIME, state.rain);       // the start screen always glows at golden hour
 
   if (live) {
     const playing = state.mode === 'playing';
@@ -898,9 +931,32 @@ function tick() {
   const beachDist = Math.max(0, SZ - pl.z);
   sfx.ambience(dt, { night: env.night, rain: state.rain, beachDist: state.started ? beachDist : 200, indoors });
   $('water-tint').classList.toggle('hidden', !(state.started && player.headInWater && state.camMode === 0));
+  fx.update(env, camera.position, now);
+  updateBlobs(now);
+  watchFrameRate(dt);
   // Behind a full-screen overlay nobody is looking at the world closely, so draw it at a quarter of the speed.
   const covered = state.started && state.mode !== 'playing' && state.mode !== 'chat';
   if (!covered || (frameCount++ & 3) === 0) scene.render();
+}
+
+// Height of the first solid cell below (x, y, z): where an entity's soft shadow lands.
+function groundBelow(x, y, z) {
+  const ix = Math.floor(x), iz = Math.floor(z);
+  for (let yy = Math.floor(y + 0.4); yy >= Math.max(0, Math.floor(y) - 14); yy--) if (world.solidBoxes(ix, yy, iz)) return yy + 1;
+  return 1;
+}
+
+let blobPrune = 0;
+function updateBlobs(now) {
+  if (!state.started) { fx.pruneBlobs(new Set()); return; }
+  const alive = blobPrune < now ? new Set() : null;
+  const put = (key, x, y, z, r, on) => { fx.blob(key, x, groundBelow(x, y, z), z, r * (1 - Math.min(0.5, Math.max(0, y - groundBelow(x, y, z)) / 10)), on); if (alive) alive.add(key); };
+  const p = player.pos;
+  put(avatar, p.x, p.y, p.z, 0.5, state.camMode !== 0);
+  for (const r of residents.residents) put(r, r.x, 1, r.z, 0.5, r.visible);
+  for (const r of remote.visible()) put(r, r.x, r.y, r.z, 0.5, true);
+  for (const v of traffic.vehicles) put(v, v.x, 1, v.z, v.kind === 'danfo' ? 1.9 : 1.1, v.root.isEnabled());
+  if (alive) { fx.pruneBlobs(alive); blobPrune = now + 1500; }
 }
 
 function mapExtras() {
@@ -1072,7 +1128,7 @@ function updateHud() {
   $('info-sub').textContent = `${districtAt(px, pz)} - ${h.sub}`;
   const hr = state.time * 24;
   $('info-clock').textContent = `${clockString(state.time)} Lagos`;
-  $('info-weather').textContent = state.rain > 0.3 ? 'Rain' : hr > 6.6 && hr < 19 ? 'Sunny' : 'Night';
+  $('info-weather').textContent = state.rain > 0.3 ? 'Rain' : hr > 5.6 && hr < 7.4 ? 'Sunrise' : hr >= 7.4 && hr < 17 ? 'Sunny' : hr >= 17 && hr < 19.4 ? 'Sunset' : 'Night';
   const extra = (G.online && latencyMs ? `  ${latencyMs}ms` : '') + (player.flying ? '  flying' : '') + (player.inWater ? '  swimming' : '');
   $('info-pos').textContent = `${px}, ${Math.floor(player.pos.y)}, ${pz}  ${Math.round(engine.getFps())}fps${extra}`;
   const hint = $('hint-bar');
@@ -1120,6 +1176,7 @@ function showMode(mode) {
   state.mode = mode;
   for (const [m, id] of Object.entries(OVERLAYS)) $(id).classList.toggle('hidden', m !== mode);
   $('hud').classList.toggle('hidden', mode === 'menu' || mode === 'loading' || mode === 'claim');
+  document.body.classList.toggle('menu-open', mode === 'menu' || mode === 'loading' || mode === 'claim');
   $('touch').classList.toggle('hidden', !(isTouch && (mode === 'playing' || mode === 'chat')));
   if (mode !== 'playing' && mode !== 'chat') { Object.keys(keys).forEach((k) => (keys[k] = false)); mouse.left = mouse.right = false; }
   if (mode === 'paused') { renderAchievements($('achv-list'), achievements.got); $('achv-count').textContent = `${achievements.count()}`; syncSettingsUI(); accountPanel?.render(); }
@@ -1157,11 +1214,6 @@ function teleportToPlot(p) {
   const f = plotFront(p);
   teleport(f.x, f.z);
   player.yaw = f.yaw; player.pitch = 0.1;
-}
-
-function applyQuality() {
-  applyResolution();
-  applyViewDistance();
 }
 
 function syncSettingsUI() {
@@ -1239,7 +1291,7 @@ function bindUI() {
   // settings
   const view = $('set-view'), res = $('set-res'), sens = $('set-sens'), vol = $('set-vol'), time = $('set-time'), freeze = $('set-freeze'), weather = $('set-weather'), quality = $('set-quality');
   const save = () => storage.saveSettings(settings);
-  quality.addEventListener('change', () => { settings.quality = quality.value; applyQuality(); syncSettingsUI(); save(); });
+  quality.addEventListener('change', () => { settings.quality = quality.value; applyGraphics(); syncSettingsUI(); save(); });
   view.addEventListener('input', () => { settings.viewChunks = Number(view.value); $('set-view-val').textContent = settings.viewChunks * CHUNK + ' blocks'; applyViewDistance(); save(); });
   res.addEventListener('change', () => { settings.resolution = Number(res.value); applyResolution(); save(); });
   sens.addEventListener('input', () => { settings.sensitivity = Number(sens.value); save(); });
